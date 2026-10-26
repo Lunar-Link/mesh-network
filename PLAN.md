@@ -110,6 +110,20 @@ P1 to P5 need no hardware. P6 can start as soon as boards arrive, in parallel wi
 - The PlatformIO `native` environment can run the same unit tests with `pio test` if the team prefers one tool; the CMake host build stays as the simulator runner.
 - Radio-specific decisions (frame size the radio supports, airtime model, channel sensing) are made in the port and must not leak into `lib/lmesh/`.
 
+**Pin map** (`include/board.h`, set up by `src/board.c`; the clock runs at 80 MHz from the PLL on the 4 MHz MSI):
+
+| Function | Peripheral | Pins | Notes |
+|---|---|---|---|
+| Radio SPI | SPI1, 8-bit mode 0, 5 MHz | PA5 SCK (D13), PA6 MISO (D12), PA7 MOSI (D11) | The pins most LoRa shields use. PA5 is also the LD2 LED, so the LED is not used. |
+| Radio select, reset, interrupt | GPIO, EXTI15_10 | PB6 NSS (D10), PC7 reset (D9), PA10 DIO0 (D2) | NSS and reset idle high; DIO0 rising edge with a pull-down. |
+| Second SPI | SPI2, 8-bit mode 0, 5 MHz | PB13 SCK, PC2 MISO, PC3 MOSI, PB12 NSS | Morpho headers; reserved for storage or a second radio. |
+| Sensor bus | I2C1, 100 kHz | PB8 SCL (D15), PB9 SDA (D14) | Arduino I2C position. |
+| Line protocol | USART2, 115200 8N1 | PA2 TX, PA3 RX | The ST-LINK virtual COM port, so a laptop needs only the USB cable. |
+| Battery sense | ADC1 channel 1, 12-bit | PC0 (A5) | Through a 2:1 divider set in `board.h`; `board_battery_mv()` returns millivolts, 0 when the read fails. |
+| User button | GPIO input | PC13 | |
+
+This replaces the CubeMX-generated proposal of 26 October, which had left SPI at 4-bit data, the UART at 209700 baud 7-bit on LPUART1 pins that do not reach the ST-LINK, no radio select or interrupt line, and an output on the 32 kHz crystal pad PC14.
+
 ---
 
 ## 7. Open items

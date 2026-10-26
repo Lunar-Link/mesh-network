@@ -14,8 +14,8 @@ Node software for the Resilient Lunar Surface Communications Network capstone: a
 ```
 mesh-network/
   platformio.ini      board build: Nucleo-L476RG (STM32L476RG), STM32Cube HAL
-  src/                board application: main, and later the platform port and radio glue
-  include/            board application headers (pins, radio settings), created when needed
+  src/                board application: main.c, board.c (clock, pins, SPI, I2C, UART, ADC), stm32l4xx_it.c (interrupt handlers); the platform port comes next
+  include/            board.h, the pin map and peripheral handles
   lib/lmesh/          the protocol library, found by PlatformIO automatically
     library.json        manifest and the library's compiler flags
     include/lmesh/      public headers, included by the platform and the application
