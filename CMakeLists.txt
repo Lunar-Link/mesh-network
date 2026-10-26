@@ -10,21 +10,21 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
 add_library(lmesh STATIC
-    src/aes.c
-    src/frame.c
-    src/link.c
-    src/flood.c
-    src/neighbor.c
-    src/hello.c
-    src/route.c
-    src/store.c
-    src/message.c
-    src/dedup.c
-    src/status.c
-    src/host.c
-    src/node.c
+    lib/lmesh/src/aes.c
+    lib/lmesh/src/frame.c
+    lib/lmesh/src/link.c
+    lib/lmesh/src/flood.c
+    lib/lmesh/src/neighbor.c
+    lib/lmesh/src/hello.c
+    lib/lmesh/src/route.c
+    lib/lmesh/src/store.c
+    lib/lmesh/src/message.c
+    lib/lmesh/src/dedup.c
+    lib/lmesh/src/status.c
+    lib/lmesh/src/host.c
+    lib/lmesh/src/node.c
 )
-target_include_directories(lmesh PUBLIC include PRIVATE src)
+target_include_directories(lmesh PUBLIC lib/lmesh/include PRIVATE lib/lmesh/src)
 
 function(lmesh_warnings target)
     if(MSVC)
@@ -47,7 +47,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     function(lmesh_add_test name)
         add_executable(${name} ${ARGN})
         target_link_libraries(${name} PRIVATE lmesh)
-        target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+        target_include_directories(${name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/lib/lmesh/src)
         lmesh_warnings(${name})
         add_test(NAME ${name} COMMAND ${name})
     endfunction()

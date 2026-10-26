@@ -1,0 +1,16 @@
+{
+  "name": "lmesh",
+  "version": "0.1.0",
+  "description": "Lunar mesh node library: authenticated frames, hop-acknowledged links, Babel-style distance-vector routing, store-carry-forward messaging with receipts.",
+  "keywords": ["mesh", "routing", "store-and-forward", "lora"],
+  "repository": {"type": "git", "url": "https://github.com/Lunar-Link/mesh-network.git"},
+  "frameworks": "*",
+  "platforms": "*",
+  "headers": "lmesh/lmesh.h",
+  "build": {
+    "srcDir": "src",
+    "includeDir": "include",
+    "flags": ["-Wall", "-Wextra", "-Werror", "-Wshadow", "-Wconversion"]
+  },
+  "export": {"include": ["src", "include", "library.json", "README.md", "SPEC.md", "PLAN.md"]}
+}

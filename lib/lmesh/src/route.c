@@ -30,8 +30,13 @@ static void save_seqno(lmesh_node *node)
 void lmesh_route_init(lmesh_node *node)
 {
     uint8_t b[SEQNO_SLOT_LEN];
-    if (node->port.storage_read && node->port.storage_read(node->port.ctx, LMESH_SLOT_SEQNO, b, sizeof b) == 0 &&
-        lmesh_get16(b + 2) == (uint16_t)~lmesh_get16(b)) {
+    bool restored = false;
+    if (node->port.storage_read && node->port.storage_read(node->port.ctx, LMESH_SLOT_SEQNO, b, sizeof b) == 0) {
+        unsigned saved = lmesh_get16(b);
+        unsigned check = lmesh_get16(b + 2);
+        restored = check == (~saved & 0xFFFFu);
+    }
+    if (restored) {
         node->route.own_seqno = (uint16_t)(lmesh_get16(b) + LMESH_SEQNO_BOOT_MARGIN);
     } else {
         node->route.own_seqno = (uint16_t)lmesh_rand_range(node, 0, 0xFFFFu);

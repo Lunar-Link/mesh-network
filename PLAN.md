@@ -30,7 +30,7 @@ The order of work is bottom-up through the layers, with the two hard requirement
 
 1. **C11, no heap.** Every table is a fixed array sized by `lmesh_config.h`. No `malloc`, no recursion without a fixed bound, no floating point in the protocol (ETX is fixed-point in 1/8 units).
 2. **Externally clocked, never blocking.** The library runs only inside `lmesh_tick()`, `lmesh_radio_rx()`, `lmesh_radio_tx_done()`, and the API calls. It reads the clock through the port and never spins or sleeps.
-3. **Radio-agnostic.** The library knows the radio through `lmesh_port` only. Nothing in `src/` names a radio, a band, or a modulation.
+3. **Radio-agnostic.** The library knows the radio through `lmesh_port` only. Nothing in `lib/lmesh/` names a radio, a band, or a modulation; that belongs in the firmware `src/` behind the port.
 4. **Host first.** Every module gets unit tests on the host, and every protocol behavior gets a simulator scenario, before it runs on a board.
 5. **Warnings are errors.** `-Wall -Wextra -Werror -Wshadow -Wconversion` on GCC and Clang, `/W4 /WX` on MSVC.
 6. **Minimal comments.** One line at the top of each file saying what it is, and a line before a large section when its purpose is not evident. Nothing describing how a line works.
@@ -52,7 +52,7 @@ Sizes are relative: S is a day or two, M up to a week, L more than a week, for o
 | **P3** | Neighbors and routing | `neighbor` table with HELLO loss bitmap and bidirectional ETX; `hello` encode/decode, periodic and triggered sends, pagination; `route` table with feasibility, selection with hysteresis, retraction, expiry, sequence-number requests; events. | Scenarios S1–S6. Randomized sweep: 200 seeds of random topologies up to 16 nodes, random node kills with an alternate path; every destination with a path converges, zero forwarding loops detected by hop count, recovery time distribution recorded. | L | R1, R2, R4 |
 | **P4** | Messaging | `store` records with checksum, lifetimes, eviction; `message` submit, forward, hold, custody transfer, receipts, origin shadow and end-to-end re-send, states and events, weighted round-robin; `dedup` windows and forward cache; command execution callback. | Scenarios S7–S12. Randomized sweep: partition and heal with 30 % loss and random relay kills; every unexpired message delivers exactly once; exactly one Delivered event per message; routine wait bounded at seven handovers under urgent saturation. | L | M1–M7, U4 |
 | **P5** | Status and interface | `status` frames and node table, station identifier; `host` line protocol: command parser, JSON formatter for events and dumps; `lmesh_next_wake_ms()`. | Scenario S13. Unit tests on parser and formatter. A scripted session against the simulator exercises every command and sees every event type. | M | N3, U1–U3, U5 |
-| **P6** | Target build | PlatformIO library manifest and example application for the development boards (STM32 or ESP32 as the team settles), port implementation for the dev radio, provisioning of identity, serial for the line protocol. Radio-specific; see Section 6. | Two boards exchange frames; four boards pass a message over two hops with a receipt. | M | N1, N2, R3 |
+| **P6** | Target build | PlatformIO project for the Nucleo-L476RG (STM32L476RG, STM32Cube HAL), port implementation for the dev radio, provisioning of identity, serial for the line protocol. Radio-specific; see Section 6. | Two boards exchange frames; four boards pass a message over two hops with a receipt. | M | N1, N2, R3 |
 | **P7** | Bench and campaign | Failure injection on the bench, soak run, the characterization campaign (C1–C6), demo script D1–D5 three times in a row. | Data, plot, and method for each of C1–C6; demo rehearsal clean. | M–L | C1–C6, D1–D5 |
 
 P1 to P5 need no hardware. P6 can start as soon as boards arrive, in parallel with P3, by porting the P0 skeleton and proving the frame exchange. Deferred features in SPEC Section 16 come after P7 or when a phase has slack.
@@ -102,12 +102,13 @@ P1 to P5 need no hardware. P6 can start as soon as boards arrive, in parallel wi
 
 ## 6. Target build
 
-The team's working assumption is **PlatformIO** for the development boards, STM32 or ESP32, as the simplest shared toolchain. Nothing is started yet. When P6 begins:
+*Revised 26 October 2026 (Rev. 2).* The board is the **Nucleo-L476RG** (STM32L476RG, Cortex-M4F, 128 kB RAM, 1 MB flash) and the toolchain is **PlatformIO** with the STM32Cube HAL framework. The folder itself is the PlatformIO project:
 
-- Add a `library.json` at the folder root so the library is a PlatformIO dependency: `src/` and `include/` are already laid out as PlatformIO expects, and `sim/` and `tests/` sit outside `src/` so they are not compiled into firmware.
-- Put the board application in a separate PlatformIO project (for example `firmware/` beside this folder) that depends on this library by path, implements `lmesh_port` for the chosen board and radio, provisions identity from flash or a build flag during bring-up, and wires the line protocol to the USB serial.
+- `platformio.ini` at the root defines the `nucleo_l476rg` environment (ST-LINK upload and debug, 115200 baud monitor). `src/main.c` is an empty application that initializes the HAL and services SysTick; it builds and links at 588 bytes of flash.
+- The library lives in `lib/lmesh/` with its `library.json`, so PlatformIO compiles it automatically with `-Wall -Wextra -Werror -Wshadow -Wconversion` on the ARM compiler. The first board build caught three sign-conversion idioms that GCC 15 on the host accepted; the ARM toolchain PlatformIO ships is older and stricter, which is a feature.
+- Next in P6: implement `lmesh_port` in `src/` for the chosen radio module (SPI driver, transmit-done interrupt, airtime estimate, optional channel activity detection), provision identity from a flash page or a build flag during bring-up, wire the line protocol to the ST-LINK virtual COM port, and call `lmesh_tick()` from the main loop with sleep until `lmesh_next_wake_ms()`.
 - The PlatformIO `native` environment can run the same unit tests with `pio test` if the team prefers one tool; the CMake host build stays as the simulator runner.
-- Radio-specific decisions (frame size the radio supports, airtime model, channel sensing) are made in the port and must not leak into `src/`.
+- Radio-specific decisions (frame size the radio supports, airtime model, channel sensing) are made in the port and must not leak into `lib/lmesh/`.
 
 ---
 
@@ -163,7 +164,7 @@ Each has a working assumption so that work proceeds.
 | P3 Routing | Done. S1 to S6 pass; S3 and S6 pass 200 of 200 seeds after the route-request hop-limit fix below. |
 | P4 Messaging | Done. `store`, `dedup`, `message` unit-tested (456 checks in `test_message` alone); S7 to S12, S12L and S14 pass; S9, S10 and S11 pass 200 of 200 seeds, S8, S12, S12L and S14 50 of 50. |
 | P5 Status and interface | Code done: `status`, `host` unit-tested; S13 passes. The scripted interface session is not written. |
-| P6 Target build | Not started. |
+| P6 Target build | Started: PlatformIO project for the Nucleo-L476RG builds with an empty main; the library compiles clean on the ARM toolchain. Port not written. |
 | P7 Bench | Not started. |
 
 ### 9.2 Measurements from the simulator (defaults, seed sweeps of 200)
