@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 project(lunar_mesh C)
 
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
+endif()
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
@@ -35,7 +39,8 @@ lmesh_warnings(lmesh)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     enable_testing()
 
-    add_executable(lmesh_sim sim/sim_net.c sim/sim_main.c)
+    add_executable(lmesh_sim sim/sim_net.c sim/sim_topo.c sim/sim_check.c sim/sim_msg.c sim/sim_scenarios.c
+                             sim/sim_main.c)
     target_link_libraries(lmesh_sim PRIVATE lmesh)
     lmesh_warnings(lmesh_sim)
 
@@ -60,4 +65,11 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     lmesh_add_test(test_status tests/unit/test_status.c)
     lmesh_add_test(test_host tests/unit/test_host.c)
     add_test(NAME sim_smoke COMMAND lmesh_sim smoke 1)
+    foreach(scenario S1 S2 S3 S4 S5 S6 S13 S7 S8 S9 S10 S11 S12 S14)
+        add_test(NAME sim_${scenario} COMMAND lmesh_sim ${scenario} 1)
+    endforeach()
+    foreach(scenario S3 S6 S9 S11)
+        add_test(NAME sim_sweep_${scenario}
+                 COMMAND lmesh_sim sweep ${scenario} 20 --known ${CMAKE_CURRENT_SOURCE_DIR}/sim/regression_seeds.txt)
+    endforeach()
 endif()

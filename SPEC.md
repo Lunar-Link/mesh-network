@@ -1,6 +1,6 @@
 # Lunar Mesh Network: Specification
 
-*Revision 1, 26 October 2026. A starting point; expect revisions as the simulator and bench results come in.*
+*Revision 2, 26 October 2026 (Revision 1 earlier the same day). A starting point; expect revisions as the simulator and bench results come in. Revision 2 folds in the decisions made while implementing the message layer and the first simulator scenarios; each is marked "(Rev. 2)" where it applies.*
 
 This document specifies the node software for the Resilient Lunar Surface Communications Network: the protocol every node runs, the formats on the wire, the behavior the interface sees, and the interface between the protocol and the platform it runs on. It is written from the capstone brief (Section 2) and is independent of the radio and the microcontroller.
 
@@ -211,7 +211,7 @@ Used by `STATUS` and `ROUTE_REQ`. Every flooded payload begins with a three-byte
 | 1 | 1 | Flood sequence, per origin |
 | 2 | 1 | Hop limit remaining |
 
-On receipt, a node looks up (origin, flood sequence) in a cache of the last `LMESH_FLOOD_CACHE` (default 32) entries. A new entry is delivered to the owning module and, if the hop limit is above one, scheduled for one rebroadcast with the hop limit decremented after a random delay of one to three slots. A repeat is dropped. Floods start with `LMESH_FLOOD_HOPS` (default 4).
+On receipt, a node looks up (origin, flood sequence) in a cache of the last `LMESH_FLOOD_CACHE` (default 32) entries. A new entry is delivered to the owning module and, if the hop limit is above one, scheduled for one rebroadcast with the hop limit decremented after a random delay of one to three slots. A repeat is dropped. `STATUS` floods start with `LMESH_FLOOD_HOPS` (default `LMESH_MAX_HOPS`, 8, so a status reaches every node a message can reach) and `ROUTE_REQ` floods with `LMESH_ROUTE_REQ_HOPS` (default `LMESH_MAX_NODES`, 16, so a request always reaches its destination) (Rev. 2; Revision 1 used 4 for both, and in random 16-node topologies a request could not reach a destination more than four hops away, leaving the requester without a route while a path existed). The duplicate cache, not the hop limit, bounds the cost of a flood to one frame per node.
 
 ---
 
@@ -243,6 +243,7 @@ One entry per neighbor heard, up to `LMESH_MAX_NEIGHBORS` (default 16):
 
 - id, time last heard, last HELLO sequence, a bitmap of the last `LMESH_ETX_WINDOW` (default 16) expected HELLOs marking which were received;
 - reception quality the neighbor reports for us, and when it reported it;
+- the neighbor's own route sequence number from its last HELLO (Rev. 2, used for restart detection);
 - last signal quality from the platform (RSSI, SNR), for the interface and for characterization;
 - consecutive hop-acknowledgment failures;
 - the neighbor's advertised route list (Section 8.3).
@@ -252,6 +253,8 @@ A neighbor is **usable** for routing only once it has listed us in a HELLO, so a
 ### 7.3 Liveness
 
 A neighbor is declared **down** when either no HELLO arrives for `LMESH_HELLO_MISS_LIMIT` (default 3) periods plus the jitter margin, or `LMESH_LINK_FAIL_LIMIT` consecutive unicast attempts to it fail. Declaring a neighbor down retracts every route through it (Section 8.4), raises a `neighbor down` event, and schedules a triggered HELLO. A HELLO from a down neighbor brings it back **up** at once, with its ETX window reset to a pessimistic start, and raises `neighbor up`.
+
+**Restart detection (Rev. 2).** A neighbor that reboots faster than the miss limit detects (a brown-out or watchdog reset) comes back with empty tables, while its neighbors still hold its old route vector; without detection a transient loop forms until the vector expires. A HELLO from an up neighbor is treated as a restart when its HELLO sequence went backward by 3 to 128 (a gap of 1 or 2 is tolerated, and wraparound is ordinary forward progress), or when its own route sequence number changed and the HELLO sequence is not continuous (gap outside 1 to `LMESH_ETX_WINDOW`). A restart runs the neighbor-down path (vector cleared, routes re-selected, link state reset, `neighbor down`) and then the neighbor-up path (`neighbor up`, pessimistic ETX). An own-sequence-number change with a continuous HELLO sequence is a `ROUTE_REQ` bump (Section 8.6), not a restart: the vector is replaced by the HELLO's list without resetting the link.
 
 ### 7.4 Link metric
 
@@ -277,7 +280,7 @@ Each node owns a 16-bit **route sequence number** for itself. It changes only wh
 
 ### 8.3 Route table and feasibility
 
-For each destination the node keeps: destination id, the selected next hop, the selected route's sequence number and metric, the **feasibility distance** (the lowest (sequence number, metric) pair the node has ever advertised for that destination, compared lexicographically with newer sequence numbers counting as lower), and the time the selected route was last refreshed. For each neighbor the node keeps the vector that neighbor last advertised: for every destination, (sequence number, metric, time received).
+For each destination the node keeps: destination id, the selected next hop, the selected route's sequence number and metric, the **feasibility distance** (the lowest (sequence number, metric) pair the node has ever advertised for that destination, compared lexicographically with newer sequence numbers counting as lower), and the time the selected route was last refreshed. For each neighbor the node keeps the vector that neighbor last advertised: for every destination, (sequence number, metric, time received). (Rev. 2) A complete HELLO (no `MORE` flag, first route entry the sender itself) replaces the vector: destinations it does not list are withdrawn at once and re-selected, instead of waiting for `LMESH_ROUTE_HOLD_MS`. Paginated HELLOs only update the entries they carry. **Echo filter:** if a HELLO lists the receiver itself with a sequence number other than the receiver's current one, the sender's vector predates the receiver's current number, so only the sender's own entry and any infinite (retraction) entries are applied; the finite entries are ignored until the sender repeats the current number. This is what stops a rebooted node from adopting a route that leads back through itself before its first HELLO has reached its neighbors.
 
 An advertisement (s, m) from a neighbor for destination D is **feasible** if m is infinity, or s is newer than the feasibility distance's sequence number, or s equals it and m is strictly smaller than its metric. Only feasible advertisements can become the selected route. This is the condition that prevents loops: a node never routes through a neighbor whose knowledge of the destination is older or worse than what the node itself has already told the network.
 
@@ -288,7 +291,7 @@ An advertisement (s, m) from a neighbor for destination D is **feasible** if m i
 - **Retraction.** When a destination becomes unreachable (its next hop went down, or the next hop advertised infinity, and no feasible alternative exists), the node advertises (current sequence number, infinity) for it in the next `LMESH_RETRACT_REPEATS` (default 3) HELLOs and raises `route lost`. Receiving infinity from the selected next hop retracts the route immediately.
 - **Expiry.** An advertisement not refreshed within `LMESH_ROUTE_HOLD_MS` (default 35 s, 3.5 HELLO periods) is treated as infinity.
 - **Own entry.** A node advertises itself as (own sequence number, 0). A node is always its own best route to itself and never accepts a route to itself.
-- **Hop limit.** Independently of the above, a `DATA` message whose hop count reaches `LMESH_MAX_HOPS` (default 8) is dropped and counted. This bounds the damage of any transient loop.
+- **Hop limit.** Independently of the above, a relay refuses a `DATA` message whose hop count has reached `LMESH_MAX_HOPS` (default 8) with `REFUSED_INVALID`, and a destination refuses one whose count exceeds it, so an eight-hop path still delivers; both count `hop_limit_drops` (Rev. 2). This bounds the damage of any transient loop.
 
 ### 8.5 Triggered updates
 
@@ -304,7 +307,7 @@ When a node loses its selected route to D and every advertisement it holds for D
 | 3 | 1 | Destination D |
 | 4 | 2 | Requested sequence number: the feasibility distance's number plus one |
 
-D, on receiving a request for a number newer than its own, adopts the requested number and sends a triggered HELLO. The new number propagates and makes the surviving routes feasible. Requests for the same destination are rate-limited to one per `LMESH_ROUTE_REQ_GAP_MS` (default 5 s), and a request for a number D has already passed is ignored. Nodes other than D forward the request only through the flood mechanism; no node answers for another.
+D, on receiving a request for a number newer than its own, adopts the requested number and sends a triggered HELLO. The new number propagates and makes the surviving routes feasible. Requests for the same destination are rate-limited to one per `LMESH_ROUTE_REQ_GAP_MS` (default 5 s), and a request for a number D has already passed is ignored. Requests are flooded with the `LMESH_ROUTE_REQ_HOPS` limit (Section 6.4). Nodes other than D forward the request only through the flood mechanism; no node answers for another.
 
 Without this mechanism a node could remain stuck after a failure even though a path exists. It is small and it completes the loop-avoidance argument, so it is part of the baseline, not a stretch item.
 
@@ -325,7 +328,7 @@ Carried as the `DATA` payload. 10 bytes, then content.
 | 3 | 1 | Destination node |
 | 4 | 1 | Bits 0–3 type: 0 `TEXT`, 1 `COMMAND`, 2 `TELEMETRY`, 3 `RECEIPT`. Bits 4–5 priority: 0 `URGENT`, 1 `NORMAL`, 2 `ROUTINE`. Bit 6 `RESEND`: end-to-end re-send by the origin. Bit 7 reserved. |
 | 5 | 4 | Remaining lifetime, seconds |
-| 9 | 1 | Hop count |
+| 9 | 1 | Hop count: transmissions so far, so the origin sends 1 (Rev. 2). Bit 7 of byte 4 is ignored on receipt. |
 | 10 | c | Content, at most `LMESH_MAX_CONTENT` = `LMESH_MAX_PAYLOAD` − 10 bytes (98 with the default frame) |
 
 (origin, message id) identifies a message everywhere in the network (M4). The counter is persisted every `LMESH_MSGID_SAVE_EVERY` (default 16) messages and restored with a margin of 64 on start-up, so a rebooted node never reuses a live id (X3).
@@ -335,7 +338,7 @@ Carried as the `DATA` payload. 10 bytes, then content.
 - **TEXT**: content is UTF-8 text, delivered to the application at the destination.
 - **COMMAND**: content is application-defined. The destination executes it through the application callback exactly once and returns a result code and up to `LMESH_RESULT_MAX` bytes in the receipt.
 - **TELEMETRY**: content is application-defined, delivered to the application. Low-rate structured data.
-- **RECEIPT**: generated by the protocol at the destination for every delivered message, addressed back to the origin. Content: original message id (2), result code (1): 0 `DELIVERED`, 1 `EXECUTED`, 2 `REJECTED`, 3 `UNSUPPORTED`; then any result bytes. A receipt inherits the priority of the message it confirms, gets a fresh message id from the destination's counter, and is stored and forwarded like any other message. Receipts are not themselves receipted.
+- **RECEIPT**: generated by the protocol at the destination for every delivered message, addressed back to the origin. Content: original message id (2), result code (1): 0 `DELIVERED`, 1 `EXECUTED`, 2 `REJECTED`, 3 `UNSUPPORTED`; then any result bytes. A receipt inherits the priority of the message it confirms, gets a fresh message id from the destination's counter, and is stored and forwarded like any other message. Receipts are not themselves receipted. (Rev. 2) A receipt's lifetime is `LMESH_LIFETIME_TEXT_S`. The destination stores it as a relay-role record with itself as origin, so it is released when the next hop accepts it, has no shadow copy, and raises no message-state events. A receipt replayed for a repeated `COMMAND` carries the stored result code and no result bytes.
 
 ### 9.3 Store
 
@@ -345,8 +348,8 @@ A fixed array of `LMESH_STORE_SIZE` (default 64) records. Each record holds the 
 
 - A message enters a node's store when the application submits it (role `ORIGIN_COPY`) or when a `DATA` frame carrying it is accepted and acknowledged (role `RELAY`). A node acknowledges `ACCEPTED` only after the record is stored. If the store cannot take it, the node answers `REFUSED_FULL` and the sender keeps custody.
 - A stored message is **eligible** when the node has a selected route to its destination (or the destination is a usable neighbor), its next attempt time has passed, and no other message is in flight. The scheduler (Section 9.8) picks the next eligible message, hands it to the link layer addressed to the route's next hop, and waits.
-- On `ACCEPTED` or `DUPLICATE` the relay record is released. On `REFUSED_FULL` the record waits `LMESH_REFUSE_BACKOFF_MS`. On link failure the record stays, its attempt count increments, and its next attempt is set by exponential backoff from `LMESH_FWD_BACKOFF_MIN_MS` (default 2 s) to `LMESH_FWD_BACKOFF_MAX_MS` (default 60 s). Route selection will usually have moved to another next hop by then.
-- A message with no route is **held**. It does not consume attempts. A `route changed` event for its destination or a `neighbor up` event makes every held message eligible at once; this is what drains the store when connectivity returns (M3, D5).
+- On `ACCEPTED` or `DUPLICATE` the relay record is released. On `REFUSED_FULL` the record waits `LMESH_REFUSE_BACKOFF_MS`. On link failure the record stays, its attempt count increments, and its next attempt is set by exponential backoff from `LMESH_FWD_BACKOFF_MIN_MS` (default 2 s) to `LMESH_FWD_BACKOFF_MAX_MS` (default 60 s): the minimum doubled per attempt, plus up to 25 % random jitter, capped at the maximum (Rev. 2). Attempt counts are not reset when custody passes. If the transmit queue is full the scheduler retries after one slot without spending round-robin credit (Rev. 2). Route selection will usually have moved to another next hop by then.
+- A message with no route is **held**. It does not consume attempts. A `route changed` event for its destination or a `neighbor up` event makes every held message eligible at once; this is what drains the store when connectivity returns (M3, D5). Only held messages are affected: a message backing off after a hop failure or `REFUSED_FULL` keeps its backoff (Rev. 2).
 - A message leaves a store in exactly three ways: the next hop took custody, its lifetime reached zero, or it was evicted (Section 9.7). Nothing else drops a stored message.
 
 ### 9.5 Lifetime (M2, X2)
@@ -357,18 +360,19 @@ Lifetime is a countdown in seconds. When a node forwards a message it subtracts 
 
 At the destination:
 
-- The `dedup` module keeps, per origin, the highest message id delivered and a 32-bit bitmap of the ids before it (the sliding window of RFC 4303 Appendix A). A message inside the window and already marked, or older than the window, is a **duplicate**: it is acknowledged at the hop, not delivered again, and its receipt is re-sent. A new id is marked and delivered. Windows are persisted with the message-id counter when storage is available.
-- A `COMMAND` runs once; the result is captured in the receipt. If the same command arrives again, the stored result code is returned in a fresh receipt without re-execution.
+- The `dedup` module keeps, per origin, the highest message id delivered and a bitmap of the `LMESH_DEDUP_WINDOW_BITS` (default 128) ids before it (the sliding window of RFC 4303 Appendix A). A message inside the window and already marked is a **duplicate**: it is acknowledged at the hop, not delivered again, and its receipt is re-sent. A new id inside or ahead of the window is marked and delivered. (Rev. 2) An id older than the window cannot be judged and is **accepted** and delivered without moving the window, and counted in `dedup_outside`; Revision 1 treated it as a duplicate, and the simulator showed urgent messages delayed by hop backoff arriving more than 32 ids late, so the destination confirmed messages it never delivered. A rare duplicate after extreme reordering is the lesser harm, and the window is sized so that it stays rare. Receipts at the origin pass through the same window and counter. Windows are persisted with the message-id counter when storage is available.
+- A `COMMAND` runs once; the result is captured in the receipt. If the same command arrives again, the stored result code is returned in a fresh receipt without re-execution. The last `LMESH_DEDUP_CMD_HISTORY` (default 4) command results per origin are kept (Rev. 2).
 - The receipt is submitted to the store addressed to the origin and follows Section 9.4.
+- (Rev. 2) If the receipt cannot be stored, the message is still delivered and acknowledged `ACCEPTED` (`DUPLICATE` for a repeat); the origin's end-to-end re-send fetches a receipt later. A `DATA` frame with hop count 0, remaining lifetime 0, origin equal to destination, or a malformed receipt body is answered `REFUSED_INVALID` and counted as malformed. A node's own message arriving for relay is answered `DUPLICATE`. The `delivered` counter counts messages delivered to the application here and this node's own messages confirmed by receipt.
 
 At relays:
 
-- The `dedup` module keeps a recent-forward cache of `LMESH_FWD_CACHE` (default 64) (origin, message id) pairs with the time forwarded. A `DATA` frame whose message is in the store or in the cache is acknowledged `DUPLICATE` and discarded. Entries age out after `LMESH_FWD_CACHE_HOLD_MS` (default 600 s).
+- The `dedup` module keeps a recent-forward cache of `LMESH_FWD_CACHE` (default 64) (origin, message id) pairs with the time forwarded, recorded when custody passes to the next hop. A `DATA` frame whose message is in the store is acknowledged `DUPLICATE`; one that is only in the cache is acknowledged `DUPLICATE` unless it carries `RESEND`, in which case it is accepted again and forwarded with `RESEND` preserved (Rev. 2). Without this rule the origin's end-to-end re-send died at the first relay's cache whenever the copy had been lost further along the path. Entries age out after `LMESH_FWD_CACHE_HOLD_MS` (default 600 s).
 
 At the origin:
 
-- When the origin's copy is accepted by a next hop, the record becomes an `ORIGIN_SHADOW`: the content is kept, the state is Transmitted, and an end-to-end timer starts at `LMESH_E2E_RETRY_MIN_MS` (default 30 s), doubling to `LMESH_E2E_RETRY_MAX_MS` (default 300 s). If the timer fires before the receipt, the shadow is re-queued with `RESEND` set and forwarded again; relays and the destination dedup it. This covers a relay that loses power while holding the only copy.
-- A matching receipt sets the state to Delivered, raises the event with the result code, and releases the shadow. Receipts for unknown or already-delivered messages are ignored.
+- When the origin's copy is accepted by a next hop, the record becomes an `ORIGIN_SHADOW`: the content is kept, the state is Transmitted, and an end-to-end timer starts at `LMESH_E2E_RETRY_MIN_MS` (default 30 s), doubling on each accepted re-send to `LMESH_E2E_RETRY_MAX_MS` (default 300 s): 30, 60, 120, 240, then 300 s (Rev. 2). If the timer fires before the receipt, the shadow is re-queued with `RESEND` set and forwarded again; relays and the destination dedup it. This covers a relay that loses power while holding the only copy.
+- A matching receipt sets the state to Delivered (`REJECTED` or `UNSUPPORTED` set Failed), raises the event with the result code, and releases the shadow. Receipts for unknown or already-delivered messages are acknowledged and ignored; a repeated receipt is answered `DUPLICATE` and counted (Rev. 2).
 - Receipts carry the `RESEND`-independent original id, so the first receipt to arrive wins whichever copy produced it.
 
 ### 9.7 Eviction
@@ -385,11 +389,11 @@ The origin tracks every message it created:
 
 | State | Set when |
 |---|---|
-| **Queued** | Submitted; no other node has accepted it. Also after an end-to-end re-send is queued. |
-| **Transmitted** | A next hop acknowledged `ACCEPTED` or `DUPLICATE`. |
+| **Queued** | Submitted (reason `none`); no other node has accepted it. Also after an end-to-end re-send is queued (reason `resend`). |
+| **Transmitted** | A next hop acknowledged `ACCEPTED` or `DUPLICATE` (reason `hop_accepted`). |
 | **Delivered** | A receipt arrived. Terminal. |
 | **Expired** | Lifetime reached zero at the origin with no receipt. Terminal. |
-| **Failed** | Evicted at the origin, refused as invalid, or the receipt reported `REJECTED` or `UNSUPPORTED`. Terminal. |
+| **Failed** | Evicted at the origin, refused as invalid, canceled, or the receipt reported `REJECTED` or `UNSUPPORTED`. Terminal. |
 
 Every transition raises a `message state` event with the reason. Terminal records are kept for `LMESH_HISTORY_HOLD_MS` (default 600 s) in a small history ring so the interface can show them after the fact, then recycled.
 
@@ -437,7 +441,7 @@ One command per line, space-separated fields, text to the end of the line.
 | `links` | Dump the neighbor table with ETX, RSSI, SNR, state. |
 | `routes` | Dump the route table. |
 | `msgs` | Dump every message this node originated or holds, with state. |
-| `stats` | Dump counters: frames sent and received by type, tag failures, acknowledgment timeouts, duplicates, evictions, expiries, airtime. |
+| `stats` | Dump counters: frames sent and received by type, tag failures, acknowledgment timeouts, duplicates, ids accepted outside the dedup window, evictions, expiries, airtime. |
 | `status` | Send a status broadcast now. |
 
 Every command is answered by one JSON line with `"ok":true` or `"ok":false` and a reason. Dumps are answered by one JSON line per row followed by `{"end":"<command>"}`.
@@ -476,7 +480,7 @@ The protocol is a library with no operating-system or hardware dependency. The p
 | `airtime_ms(len)` | Estimated on-air time of a frame of `len` bytes at the current radio settings. Every protocol timer scales from this. |
 | `battery_mv()` | Optional. Battery voltage for status. |
 | `health_flags()` | Optional. Application-defined bits for status. |
-| `storage_read(slot, buf, len)`, `storage_write(slot, buf, len)` | Optional. Small non-volatile slots for counters and windows. Null means volatile only. |
+| `storage_read(slot, buf, len)`, `storage_write(slot, buf, len)` | Optional. Small non-volatile slots for counters and windows. Null means volatile only. Slot 0: message-id counter (2 bytes plus CRC-16). Slot 1: route sequence number. Slot 2: dedup windows, `LMESH_MAX_NODES` records of origin (1), highest id (2), bitmap words (`LMESH_DEDUP_WINDOW_BITS`/8), result count (1), ring index (1), `LMESH_DEDUP_CMD_HISTORY` entries of id (2) and code (1), then a CRC-16 over all records; 530 bytes with the defaults (Rev. 2). An image of the wrong length or CRC is ignored. |
 
 **Called by the platform** (`lmesh.h`):
 
@@ -515,7 +519,8 @@ Compile-time constants in `lmesh_config.h`; each can be overridden with a `-D` f
 | `LMESH_HOP_RETRIES` | 3 | Retransmissions per unicast frame. |
 | `LMESH_ACK_GUARD_MS` | 200 | Added to two airtimes for the acknowledgment timeout. |
 | `LMESH_LINK_FAIL_LIMIT` | 3 | Consecutive failures before a neighbor is down. |
-| `LMESH_FLOOD_HOPS` | 4 | Initial hop limit for floods. |
+| `LMESH_FLOOD_HOPS` | `LMESH_MAX_HOPS` | Initial hop limit for `STATUS` floods (Rev. 2; was 4). |
+| `LMESH_ROUTE_REQ_HOPS` | `LMESH_MAX_NODES` | Initial hop limit for `ROUTE_REQ` floods (Rev. 2). |
 | `LMESH_FLOOD_CACHE` | 32 | (origin, sequence) pairs. |
 | `LMESH_HELLO_PERIOD_MS` | 10000 | ±20 % jitter. |
 | `LMESH_HELLO_MISS_LIMIT` | 3 | Missed periods before a neighbor is down. |
@@ -537,6 +542,8 @@ Compile-time constants in `lmesh_config.h`; each can be overridden with a `-D` f
 | `LMESH_E2E_RETRY_MAX_MS` | 300000 | Origin re-send, cap. |
 | `LMESH_FWD_CACHE` | 64 | Relay recent-forward entries. |
 | `LMESH_FWD_CACHE_HOLD_MS` | 600000 | Relay cache hold. |
+| `LMESH_DEDUP_WINDOW_BITS` | 128 | Destination duplicate window per origin; a multiple of 32 (Rev. 2; was 32). |
+| `LMESH_DEDUP_CMD_HISTORY` | 4 | Command results remembered per origin for receipt replay (Rev. 2). |
 | `LMESH_WRR_WEIGHTS` | 4, 2, 1 | Urgent, normal, routine. |
 | `LMESH_HISTORY_HOLD_MS` | 600000 | Terminal records kept for the interface. |
 | `LMESH_RESULT_MAX` | 32 | Command result bytes. |

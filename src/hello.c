@@ -1,4 +1,4 @@
-/* HELLO transmission and reception: periodic and triggered sends, route-list pagination, decoding. */
+/* HELLO transmission and reception: periodic and triggered sends, route-list pagination, decoding, vector replacement. */
 #include "hello.h"
 #include "link.h"
 #include "neighbor.h"
@@ -168,6 +168,36 @@ static bool well_formed(const uint8_t *p, size_t len)
     return len == route_count_at + 1u + m * HELLO_ROUTE_LEN;
 }
 
+static bool echoes_old_self(const lmesh_node *node, const uint8_t *routes, size_t m)
+{
+    for (size_t k = 0; k < m; k++, routes += HELLO_ROUTE_LEN) {
+        if (routes[0] == node->ident.id) {
+            return lmesh_get16(routes + 1) != node->route.own_seqno;
+        }
+    }
+    return false;
+}
+
+static bool lists(const uint8_t *routes, size_t m, lmesh_node_id dest)
+{
+    for (size_t k = 0; k < m; k++, routes += HELLO_ROUTE_LEN) {
+        if (routes[0] == dest) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void drop_unlisted(lmesh_node *node, lmesh_neighbor *n, const uint8_t *routes, size_t m)
+{
+    for (size_t s = 0; s < LMESH_MAX_NODES; s++) {
+        const lmesh_route *r = &node->route.table[s];
+        if (r->used && n->adv[s].valid && r->dest != n->id && !lists(routes, m, r->dest)) {
+            lmesh_route_withdraw(node, n, r->dest);
+        }
+    }
+}
+
 void lmesh_hello_rx(lmesh_node *node, const lmesh_frame_hdr *hdr, const uint8_t *payload, size_t len, int16_t rssi,
                     int8_t snr)
 {
@@ -192,14 +222,22 @@ void lmesh_hello_rx(lmesh_node *node, const lmesh_frame_hdr *hdr, const uint8_t 
             their_quality = p[1];
         }
     }
+    uint16_t their_seqno = lmesh_get16(payload + 1);
+    bool replaced = lmesh_neighbor_restart_check(node, n, payload[0], their_seqno);
     lmesh_neighbor_hello_seen(node, n, payload[0], listed_us, their_quality);
-    lmesh_route_update(node, n, tx, lmesh_get16(payload + 1), 0);
+    lmesh_route_update(node, n, tx, their_seqno, 0);
 
     size_t m = *p++;
+    const uint8_t *routes = p;
+    bool stale = echoes_old_self(node, routes, m);
     for (size_t k = 0; k < m; k++, p += HELLO_ROUTE_LEN) {
-        if (p[0] == self || p[0] == tx) {
+        if (p[0] == self || p[0] == tx || (stale && p[3] != LMESH_METRIC_INF)) {
             continue;
         }
         lmesh_route_update(node, n, p[0], lmesh_get16(p + 1), p[3]);
+    }
+    bool complete = (payload[3] & LMESH_HELLO_MORE) == 0 && m > 0 && routes[0] == tx;
+    if (complete || replaced) {
+        drop_unlisted(node, n, routes, m);
     }
 }

@@ -207,6 +207,7 @@ typedef struct lmesh_stats {
     uint32_t hop_limit_drops;
     uint32_t record_crc_errors;
     uint32_t airtime_ms;
+    uint32_t dedup_outside;
 } lmesh_stats;
 
 #endif

@@ -1,4 +1,4 @@
-/* Unit tests for HELLO: encoding, decode round trip, pagination, malformed input, periodic and triggered timing. */
+/* Unit tests for HELLO: encoding, decode round trip, pagination, malformed input, timing, restart and vector replacement. */
 #include <stdio.h>
 #include <string.h>
 
@@ -21,6 +21,7 @@ static int checks;
 static uint32_t clock_ms;
 static uint32_t rnd_value = 4;
 static int n_events;
+static int ev_count[LMESH_EV_STORE + 1];
 
 static uint32_t now_ms(void *ctx)
 {
@@ -51,8 +52,10 @@ static uint32_t airtime_ms(void *ctx, size_t len)
 static void on_event(void *ctx, const lmesh_event *ev)
 {
     (void)ctx;
-    (void)ev;
     n_events++;
+    if (ev->type <= LMESH_EV_STORE) {
+        ev_count[ev->type]++;
+    }
 }
 
 static lmesh_node node_a;
@@ -293,6 +296,156 @@ static void test_timing(void)
     CHECK(!h->trigger_pending);
 }
 
+typedef struct adv_entry {
+    lmesh_node_id dest;
+    uint16_t seqno;
+    uint8_t metric8;
+} adv_entry;
+
+static size_t hello_pkt(uint8_t *buf, uint8_t seq, uint16_t own, uint8_t flags, lmesh_node_id listed,
+                        const adv_entry *r, size_t m)
+{
+    size_t pos = 0;
+    buf[pos++] = seq;
+    lmesh_put16(buf + pos, own);
+    pos += 2;
+    buf[pos++] = flags;
+    buf[pos++] = 1;
+    buf[pos++] = listed;
+    buf[pos++] = 255;
+    buf[pos++] = (uint8_t)m;
+    for (size_t k = 0; k < m; k++, pos += 4) {
+        buf[pos] = r[k].dest;
+        lmesh_put16(buf + pos + 1, r[k].seqno);
+        buf[pos + 3] = r[k].metric8;
+    }
+    return pos;
+}
+
+static void send_from(lmesh_node *to, lmesh_node_id from, uint8_t seq, uint16_t own, uint8_t flags,
+                      const adv_entry *r, size_t m)
+{
+    uint8_t buf[LMESH_MAX_PAYLOAD];
+    to->now_ms += 1000;
+    deliver(to, from, buf, hello_pkt(buf, seq, own, flags, to->ident.id, r, m));
+}
+
+static void clear_events(void)
+{
+    memset(ev_count, 0, sizeof ev_count);
+}
+
+static const lmesh_adv *adv_for(lmesh_node *node, const lmesh_neighbor *n, lmesh_node_id dest)
+{
+    lmesh_route *r = lmesh_route_find(node, dest);
+    return r && n ? &n->adv[r - node->route.table] : NULL;
+}
+
+static void setup_vector(uint8_t seq)
+{
+    static const adv_entry full[] = {{20, 500, 0}, {30, 300, 16}, {31, 310, 24}};
+    setup(&node_a, 10, 0x1000);
+    send_from(&node_a, 20, seq, 500, 0, full, 3);
+    CHECK(lmesh_route_next_hop(&node_a, 30) == 20 && lmesh_route_next_hop(&node_a, 31) == 20);
+    clear_events();
+}
+
+static void test_restart(void)
+{
+    setup_vector(50);
+    lmesh_neighbor *n = lmesh_neighbor_find(&node_a, 20);
+    static const adv_entry page0[] = {{20, 516, 0}};
+    send_from(&node_a, 20, 0, 516, LMESH_HELLO_MORE, page0, 1);
+    CHECK(ev_count[LMESH_EV_NEIGHBOR_DOWN] == 1 && ev_count[LMESH_EV_NEIGHBOR_UP] == 1);
+    CHECK(ev_count[LMESH_EV_ROUTE_LOST] >= 2);
+    CHECK(lmesh_route_next_hop(&node_a, 30) == LMESH_ID_NONE && lmesh_route_next_hop(&node_a, 31) == LMESH_ID_NONE);
+    CHECK(!adv_for(&node_a, n, 30)->valid && !adv_for(&node_a, n, 31)->valid);
+    CHECK(n && n->up && n->bidirectional && n->rx_bitmap == 0x00FF && n->own_seqno == 516);
+    lmesh_route *r = lmesh_route_find(&node_a, 20);
+    CHECK(r && r->next_hop == 20 && r->seqno == 516);
+
+    setup_vector(40);
+    clear_events();
+    send_from(&node_a, 20, 80, 501, LMESH_HELLO_MORE, page0, 1);
+    CHECK(ev_count[LMESH_EV_NEIGHBOR_DOWN] == 1 && lmesh_route_next_hop(&node_a, 30) == LMESH_ID_NONE);
+}
+
+static void test_seqno_bump(void)
+{
+    setup_vector(50);
+    lmesh_neighbor *n = lmesh_neighbor_find(&node_a, 20);
+    static const adv_entry bumped[] = {{20, 501, 0}, {30, 300, 16}, {31, 310, 24}};
+    send_from(&node_a, 20, 51, 501, 0, bumped, 3);
+    CHECK(ev_count[LMESH_EV_NEIGHBOR_DOWN] == 0 && ev_count[LMESH_EV_NEIGHBOR_UP] == 0);
+    CHECK(ev_count[LMESH_EV_ROUTE_LOST] == 0);
+    CHECK(lmesh_route_next_hop(&node_a, 30) == 20 && lmesh_route_next_hop(&node_a, 31) == 20);
+    CHECK(n && n->rx_bitmap == 0x01FF && n->own_seqno == 501);
+    lmesh_route *r = lmesh_route_find(&node_a, 20);
+    CHECK(r && r->seqno == 501);
+
+    static const adv_entry page0[] = {{20, 502, 0}, {30, 300, 16}};
+    send_from(&node_a, 20, 52, 502, LMESH_HELLO_MORE, page0, 2);
+    CHECK(ev_count[LMESH_EV_NEIGHBOR_DOWN] == 0);
+    CHECK(lmesh_route_next_hop(&node_a, 30) == 20 && lmesh_route_next_hop(&node_a, 31) == LMESH_ID_NONE);
+}
+
+static void test_complete_hello(void)
+{
+    setup_vector(50);
+    lmesh_neighbor *n = lmesh_neighbor_find(&node_a, 20);
+    static const adv_entry partial[] = {{20, 500, 0}, {30, 300, 16}};
+    send_from(&node_a, 20, 51, 500, 0, partial, 2);
+    CHECK(ev_count[LMESH_EV_ROUTE_LOST] == 1 && ev_count[LMESH_EV_NEIGHBOR_DOWN] == 0);
+    CHECK(lmesh_route_next_hop(&node_a, 30) == 20 && lmesh_route_next_hop(&node_a, 31) == LMESH_ID_NONE);
+    CHECK(!adv_for(&node_a, n, 31)->valid);
+
+    static const adv_entry with31[] = {{20, 500, 0}, {30, 300, 16}, {31, 310, 24}};
+    send_from(&node_a, 20, 52, 500, 0, with31, 3);
+    CHECK(lmesh_route_next_hop(&node_a, 31) == 20);
+    static const adv_entry first_page[] = {{20, 500, 0}};
+    static const adv_entry last_page[] = {{31, 310, 24}};
+    send_from(&node_a, 20, 53, 500, LMESH_HELLO_MORE, first_page, 1);
+    send_from(&node_a, 20, 54, 500, 0, last_page, 1);
+    CHECK(lmesh_route_next_hop(&node_a, 30) == 20 && lmesh_route_next_hop(&node_a, 31) == 20);
+}
+
+static void test_wraparound(void)
+{
+    static const adv_entry full[] = {{20, 500, 0}, {30, 300, 16}, {31, 310, 24}};
+    setup_vector(254);
+    lmesh_neighbor *n = lmesh_neighbor_find(&node_a, 20);
+    send_from(&node_a, 20, 255, 500, 0, full, 3);
+    send_from(&node_a, 20, 0, 500, 0, full, 3);
+    send_from(&node_a, 20, 1, 500, 0, full, 3);
+    CHECK(ev_count[LMESH_EV_NEIGHBOR_DOWN] == 0 && ev_count[LMESH_EV_ROUTE_LOST] == 0);
+    CHECK(n && n->rx_bitmap == 0x07FF);
+    CHECK(lmesh_route_next_hop(&node_a, 30) == 20);
+
+    send_from(&node_a, 20, 0, 500, 0, full, 3);
+    CHECK(ev_count[LMESH_EV_NEIGHBOR_DOWN] == 0);
+    send_from(&node_a, 20, 253, 500, 0, full, 3);
+    CHECK(ev_count[LMESH_EV_NEIGHBOR_DOWN] == 1 && ev_count[LMESH_EV_NEIGHBOR_UP] == 1);
+}
+
+static void test_stale_echo(void)
+{
+    setup_vector(50);
+    static const adv_entry stale[] = {{20, 500, 0}, {10, 0x0FF0, 16}, {30, 300, 40}, {31, 310, LMESH_METRIC_INF}};
+    lmesh_route *r30 = lmesh_route_find(&node_a, 30);
+    uint8_t metric30 = r30 ? r30->metric8 : 0;
+    send_from(&node_a, 20, 51, 500, 0, stale, 4);
+    CHECK(r30 && r30->next_hop == 20 && r30->metric8 == metric30);
+    CHECK(lmesh_route_next_hop(&node_a, 31) == LMESH_ID_NONE);
+
+    setup(&node_b, 11, 0x2000);
+    static const adv_entry before_boot[] = {{20, 500, 0}, {11, 0x1F00, 8}, {30, 300, 16}};
+    send_from(&node_b, 20, 7, 500, 0, before_boot, 3);
+    CHECK(lmesh_route_next_hop(&node_b, 20) == 20 && lmesh_route_next_hop(&node_b, 30) == LMESH_ID_NONE);
+    static const adv_entry after_boot[] = {{20, 500, 0}, {11, 0x2000, 8}, {30, 300, 16}};
+    send_from(&node_b, 20, 8, 500, 0, after_boot, 3);
+    CHECK(lmesh_route_next_hop(&node_b, 30) == 20);
+}
+
 int main(void)
 {
     test_encode_alone();
@@ -300,6 +453,11 @@ int main(void)
     test_pagination();
     test_malformed();
     test_timing();
+    test_restart();
+    test_seqno_bump();
+    test_complete_hello();
+    test_wraparound();
+    test_stale_echo();
     printf("%s (%d checks)\n", failures ? "FAILED" : "ok", checks);
     return failures ? 1 : 0;
 }

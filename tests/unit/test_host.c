@@ -373,7 +373,7 @@ static void test_dumps(void)
 
     EXPECT_CMD("stats", "{\"tx_frames\":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],\"rx_frames\":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"
                         "\"rx_bad_tag\":0,\"rx_foreign\":0,\"rx_malformed\":0,\"ack_timeouts\":0,\"link_failures\":0,"
-                        "\"dup_hop\":0,\"dup_relay\":0,\"dup_dest\":0,\"evicted\":0,\"expired\":0,\"delivered\":0,"
+                        "\"dup_hop\":0,\"dup_relay\":0,\"dup_dest\":0,\"dedup_outside\":0,\"evicted\":0,\"expired\":0,\"delivered\":0,"
                         "\"hop_limit_drops\":0,\"record_crc_errors\":0,\"airtime_ms\":0}\n{\"end\":\"stats\"}\n");
     node.stats.tx_frames[0] = 5;
     node.stats.tx_frames[15] = 1;
@@ -386,6 +386,7 @@ static void test_dumps(void)
     node.stats.dup_hop = 6;
     node.stats.dup_relay = 7;
     node.stats.dup_dest = 8;
+    node.stats.dedup_outside = 14;
     node.stats.evicted = 9;
     node.stats.expired = 10;
     node.stats.delivered = 11;
@@ -394,7 +395,7 @@ static void test_dumps(void)
     node.stats.airtime_ms = 123456;
     EXPECT_CMD("stats", "{\"tx_frames\":[5,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1],\"rx_frames\":[0,0,4294967295,0,0,0,0,0,0,0,0,0,0,0,0,0],"
                         "\"rx_bad_tag\":1,\"rx_foreign\":2,\"rx_malformed\":3,\"ack_timeouts\":4,\"link_failures\":5,"
-                        "\"dup_hop\":6,\"dup_relay\":7,\"dup_dest\":8,\"evicted\":9,\"expired\":10,\"delivered\":11,"
+                        "\"dup_hop\":6,\"dup_relay\":7,\"dup_dest\":8,\"dedup_outside\":14,\"evicted\":9,\"expired\":10,\"delivered\":11,"
                         "\"hop_limit_drops\":12,\"record_crc_errors\":13,\"airtime_ms\":123456}\n{\"end\":\"stats\"}\n");
 }
 

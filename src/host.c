@@ -766,6 +766,7 @@ static void dump_stats(lmesh_node *node, jw *w)
     jw_ku(w, "dup_hop", s.dup_hop);
     jw_ku(w, "dup_relay", s.dup_relay);
     jw_ku(w, "dup_dest", s.dup_dest);
+    jw_ku(w, "dedup_outside", s.dedup_outside);
     jw_ku(w, "evicted", s.evicted);
     jw_ku(w, "expired", s.expired);
     jw_ku(w, "delivered", s.delivered);

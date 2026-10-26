@@ -7,11 +7,17 @@
 
 _Static_assert(LMESH_FLOOD_CACHE >= 1 && LMESH_FLOOD_CACHE <= 255, "flood cache index is one byte");
 _Static_assert(LMESH_FLOOD_HOPS >= 1 && LMESH_FLOOD_HOPS <= 255, "hop limit is one byte");
+_Static_assert(LMESH_ROUTE_REQ_HOPS >= 1 && LMESH_ROUTE_REQ_HOPS <= 255, "route request hop limit is one byte");
 _Static_assert(LMESH_MAX_PAYLOAD > LMESH_FLOOD_HEADER_LEN, "frame too small for a flood");
 
 static uint8_t flood_band(uint8_t type)
 {
     return type == LMESH_FT_ROUTE_REQ ? (uint8_t)LMESH_PRIO_URGENT : (uint8_t)LMESH_PRIO_ROUTINE;
+}
+
+static uint8_t flood_hops(uint8_t type)
+{
+    return type == LMESH_FT_ROUTE_REQ ? (uint8_t)LMESH_ROUTE_REQ_HOPS : (uint8_t)LMESH_FLOOD_HOPS;
 }
 
 static bool cache_has(const lmesh_flood_state *f, lmesh_node_id origin, uint8_t seq)
@@ -45,7 +51,7 @@ lmesh_err lmesh_flood_originate(lmesh_node *node, uint8_t type, const uint8_t *b
     uint8_t payload[LMESH_MAX_PAYLOAD];
     payload[0] = node->ident.id;
     payload[1] = f->own_seq;
-    payload[2] = LMESH_FLOOD_HOPS;
+    payload[2] = flood_hops(type);
     if (len > 0) {
         memcpy(&payload[LMESH_FLOOD_HEADER_LEN], body, len);
     }

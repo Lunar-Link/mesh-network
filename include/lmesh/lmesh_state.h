@@ -81,6 +81,8 @@ typedef struct lmesh_neighbor {
     uint32_t last_hello_ms;
     uint32_t tx_quality_ms;
     lmesh_adv adv[LMESH_MAX_NODES];
+    bool own_seqno_valid;
+    uint16_t own_seqno;
 } lmesh_neighbor;
 
 typedef struct lmesh_neighbor_state {
@@ -165,10 +167,11 @@ typedef struct lmesh_dedup_window {
     bool used;
     lmesh_node_id origin;
     uint16_t highest;
-    uint32_t bitmap;
-    uint16_t last_cmd_id;
-    uint8_t last_cmd_result;
-    bool cmd_valid;
+    uint32_t bitmap[LMESH_DEDUP_WINDOW_BITS / 32];
+    uint16_t cmd_id[LMESH_DEDUP_CMD_HISTORY];
+    uint8_t cmd_code[LMESH_DEDUP_CMD_HISTORY];
+    uint8_t cmd_count;
+    uint8_t cmd_next;
     uint32_t last_used_ms;
 } lmesh_dedup_window;
 

@@ -280,6 +280,19 @@ void lmesh_route_update(lmesh_node *node, lmesh_neighbor *from, lmesh_node_id de
     select_route(node, r);
 }
 
+void lmesh_route_withdraw(lmesh_node *node, lmesh_neighbor *from, lmesh_node_id dest)
+{
+    lmesh_route *r = lmesh_route_find(node, dest);
+    if (!from || !r) {
+        return;
+    }
+    lmesh_adv *a = &from->adv[slot_of(node, r)];
+    if (a->valid) {
+        a->valid = false;
+        select_route(node, r);
+    }
+}
+
 void lmesh_route_neighbor_down(lmesh_node *node, lmesh_node_id id)
 {
     lmesh_neighbor *n = lmesh_neighbor_find(node, id);

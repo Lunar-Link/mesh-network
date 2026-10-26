@@ -32,6 +32,9 @@ static int port_radio_send(void *ctx, const uint8_t *frame, size_t len)
     sn->tx_done_ms = pc->net->now_ms + port_airtime_ms(ctx, len);
     sn->frames_tx++;
     pc->net->frames_sent++;
+    if (pc->net->on_frame) {
+        pc->net->on_frame(pc->net->frame_ctx, pc->index, SIM_TO_AIR, frame, len);
+    }
     return 0;
 }
 
@@ -92,15 +95,25 @@ int sim_add_node(sim_net *net, lmesh_node_id id, uint8_t network_id, void (*on_e
         return -1;
     }
     sn->alive = true;
+    sn->alive_since_ms = net->now_ms;
     return i;
 }
 
 void sim_set_link(sim_net *net, int a, int b, bool up, uint8_t loss_pct)
 {
+    if (up && !net->link_up[a][b]) {
+        net->link_since_ms[a][b] = net->now_ms;
+        net->link_since_ms[b][a] = net->now_ms;
+    }
     net->link_up[a][b] = up;
     net->link_up[b][a] = up;
     net->loss_pct[a][b] = loss_pct;
     net->loss_pct[b][a] = loss_pct;
+}
+
+void sim_set_loss_dir(sim_net *net, int from, int to, uint8_t loss_pct)
+{
+    net->loss_pct[from][to] = loss_pct;
 }
 
 void sim_kill(sim_net *net, int i)
@@ -116,6 +129,48 @@ void sim_revive(sim_net *net, int i)
     lmesh_callbacks cb = sn->mesh.cb;
     lmesh_init(&sn->mesh, &sn->ident, &port, &cb);
     sn->alive = true;
+    sn->alive_since_ms = net->now_ms;
+}
+
+int sim_index_of(const sim_net *net, lmesh_node_id id)
+{
+    for (int i = 0; i < net->count; i++) {
+        if (net->nodes[i].ident.id == id) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+bool sim_linked(const sim_net *net, int a, int b)
+{
+    return a != b && net->nodes[a].alive && net->nodes[b].alive && net->link_up[a][b] && net->link_up[b][a];
+}
+
+static uint32_t latest(uint32_t x, uint32_t y)
+{
+    return (int32_t)(x - y) > 0 ? x : y;
+}
+
+bool sim_link_clean(const sim_net *net, int a, int b, uint32_t window_ms)
+{
+    if (!sim_linked(net, a, b) || net->loss_pct[a][b] != 0 || net->loss_pct[b][a] != 0) {
+        return false;
+    }
+    uint32_t since = latest(net->link_since_ms[a][b], latest(net->nodes[a].alive_since_ms, net->nodes[b].alive_since_ms));
+    if (net->dropped[a][b]) {
+        since = latest(since, net->last_drop_ms[a][b]);
+    }
+    if (net->dropped[b][a]) {
+        since = latest(since, net->last_drop_ms[b][a]);
+    }
+    return net->now_ms - since >= window_ms;
+}
+
+static void note_drop(sim_net *net, int from, int to)
+{
+    net->dropped[from][to] = true;
+    net->last_drop_ms[from][to] = net->now_ms;
 }
 
 static void deliver(sim_net *net, int from)
@@ -128,14 +183,19 @@ static void deliver(sim_net *net, int from)
         }
         if (rx->tx_active) {
             net->frames_half_duplex++;
+            note_drop(net, from, j);
             continue;
         }
         if ((sim_rand(net) % 100u) < net->loss_pct[from][j]) {
             net->frames_lost++;
+            note_drop(net, from, j);
             continue;
         }
         rx->frames_rx++;
         net->frames_delivered++;
+        if (net->on_frame) {
+            net->on_frame(net->frame_ctx, from, j, tx->tx_buf, tx->tx_len);
+        }
         lmesh_radio_rx(&rx->mesh, tx->tx_buf, tx->tx_len, -80, 8);
     }
     tx->tx_active = false;
@@ -176,6 +236,9 @@ void sim_step(sim_net *net, uint32_t ms)
             if (net->nodes[i].alive) {
                 lmesh_tick(&net->nodes[i].mesh);
             }
+        }
+        if (net->on_iter) {
+            net->on_iter(net->iter_ctx, net);
         }
     }
 }

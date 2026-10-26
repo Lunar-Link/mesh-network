@@ -1,6 +1,6 @@
 # Lunar Mesh Network: Implementation Plan
 
-*Revision 1, 26 October 2026. Companion to [SPEC.md](SPEC.md). This plan and the skeleton it describes are a starting point to be improved as the work proceeds; revise it in place and date the revisions.*
+*Revision 2, 26 October 2026 (Revision 1 earlier the same day). Companion to [SPEC.md](SPEC.md). This plan is a starting point to be improved as the work proceeds; revise it in place and date the revisions. Revision 2 adds Section 9: where the implementation stands, what it measured, and where it deviates from the plan.*
 
 ---
 
@@ -14,6 +14,7 @@
 6. [Target build](#6-target-build)
 7. [Open items](#7-open-items)
 8. [Risks](#8-risks)
+9. [Revision 2: status, measurements, deviations](#9-revision-2-status-measurements-deviations)
 
 ---
 
@@ -124,6 +125,14 @@ Each has a working assumption so that work proceeds.
 | 6 | Station identifier placement | In STATUS only. Confirm it satisfies the identification rule for the mesh as operated, with the licensed team member as control operator. |
 | 7 | Simulator collision model | Not in P2; add before P7 if load tests on the bench show collisions dominate. |
 | 8 | Interface page | Out of this folder's scope. The line protocol is its contract. |
+| 9 | Route-request repeat backoff (Rev. 2) | Requests for one destination repeat every 5 s with no backoff while the sequence-number bump propagates; the S6 sweep saw a mean of 86 and a worst of 665 request frames after a kill. Working assumption: acceptable for 16 nodes; add doubling of the gap per repeat if the bench shows request floods crowding data. |
+| 10 | Flood airtime at 16 nodes (Rev. 2) | With status floods reaching every node, the 16-node sweeps show 23 % mean and 52 % worst channel occupancy under the simulator's airtime model (15 ms plus 1.5 ms per byte), mostly HELLO and STATUS frames, with no channel sensing. The status and HELLO periods are the knobs; measure airtime on the development radio before tuning. |
+| 11 | Status collisions (Rev. 2) | Statuses are never retried, so two colliding relays on a single-path line can leave a live node stale for one period (S13 seeds 32 and 188). Working assumption: tolerable; the next period heals it. |
+| 12 | Dedup window persistence cadence (Rev. 2) | Windows are saved at most every 10 s when dirty, which is a flash-wear concern under steady traffic. Working assumption: fine on FRAM or EEPROM emulation with wear leveling; revisit when the storage medium is chosen. |
+| 13 | Message ids without storage (Rev. 2) | Without a storage port the id counter restarts at 1 on every boot, so X3 depends on the platform providing storage. Working assumption: the development boards provide it. |
+| 14 | Eviction of an in-flight record (Rev. 2) | The store can evict a record that the link layer is transmitting; an origin record then reports Failed even if the hop accepts it, and the late link result is ignored. Working assumption: rare, since eviction only happens with a full store; exclude in-flight records from eviction if S14 or the bench shows it. |
+| 15 | `delivered` counter (Rev. 2) | Counts both messages delivered to the application here and this node's own messages confirmed by receipt. Working assumption: fine for `stats`; the simulator computes delivery ratio from events. Split it if the campaign needs the two separately. |
+| 16 | Shadow eviction under origin overload (Rev. 2) | SPEC 9.7 evicts origin shadows before refusing a submit, so under overload the origin reports Failed/evicted for messages that are in the network and may deliver. Options: refuse the submit before evicting a shadow (the application is told, nothing already sent loses its tracking), or a distinct terminal reason the interface shows as "sent, unconfirmed". Working assumption: keep SPEC 9.7 until the bench shows sustained overload; the demo traffic is far below it. |
 
 ---
 
@@ -137,3 +146,65 @@ Each has a working assumption so that work proceeds.
 | Channel contention without slotting | Delivery ratio under load | Jitter on all timers, busy check where the radio offers it, small HELLOs; measure on the bench; collision model if needed. |
 | Memory on the final microcontroller | Store size | Budget in SPEC Section 14; `LMESH_STORE_SIZE` is the knob. |
 | Scope creep from the deferred list | P3–P5 slip | Deferred items wait for P7 or slack; the baseline is the brief. |
+
+---
+
+## 9. Revision 2: status, measurements, deviations
+
+*26 October 2026. Implementation waves 1 to 3 were done by one agent per module group, each owning its sources and tests; the findings below are collected from their reports and from sweeps run afterwards.*
+
+### 9.1 Status by phase
+
+| Phase | State |
+|---|---|
+| P0 Skeleton | Done. |
+| P1 Frame | Done; unit tests include the RFC 4493 CMAC vectors. |
+| P2 Link | Done; `link` and `flood` unit-tested. The simulator medium has per-link loss, half-duplex receivers, kill and revive, link cut, and a frame-inspection hook. |
+| P3 Routing | Done. S1 to S6 pass; S3 and S6 pass 200 of 200 seeds after the route-request hop-limit fix below. |
+| P4 Messaging | Done. `store`, `dedup`, `message` unit-tested (456 checks in `test_message` alone); S7 to S12, S12L and S14 pass; S9, S10 and S11 pass 200 of 200 seeds, S8, S12, S12L and S14 50 of 50. |
+| P5 Status and interface | Code done: `status`, `host` unit-tested; S13 passes. The scripted interface session is not written. |
+| P6 Target build | Not started. |
+| P7 Bench | Not started. |
+
+### 9.2 Measurements from the simulator (defaults, seed sweeps of 200)
+
+| Scenario | Value | Measured |
+|---|---|---|
+| S1 | discovery, two nodes | 4.5 s (seed 1); ETX reaches 1.0 once the 16-HELLO window fills, about 82 s |
+| S2 | route from A to D over a line of four | 6 s (seed 1); metric 3.0 plus any half-duplex loss |
+| S3 | first convergence, 4 to 16 random nodes | mean 8.2 s, worst 21 s; stable convergence worst 355 s because of the HELLO collisions in 9.3 |
+| S4 | reroute after killing A's next hop in a diamond | mean 30.4 s, worst 35 s (the HELLO miss limit of three periods dominates) |
+| S5 | reroute after cutting the link A to B | recovery worst 56 s |
+| S6 | reconvergence after a random kill with a surviving path | mean 21.8 s, worst 147 s (seed 38); request frames after the kill mean 86, worst 586; zero loops in every run |
+| S13 | killed node marked stale at every other node | mean 121 s, worst 150 s after the kill (bound `LMESH_NODE_STALE_MS`) |
+| S7 | text over a line of four | 500 ms submit to Delivered at the origin, 211 ms to the destination (seed 1); receipt path observed hop by hop |
+| S8 | command over a line of four | executed once; the replayed receipt for a second copy carries the stored code; 5.6 s to Delivered (seed 1) |
+| S9 | 100 texts at 1 per second, 30 % loss per link | delivery ratio 1.0 of accepted messages, 0 duplicates; per-run mean destination latency 113 s (p95 248 s), origin latency to Delivered 205 s (worst message 532 s); the origin refuses submits with `LMESH_ERR_FULL` once its store fills, see 9.3 |
+| S10 | both relays dead, mixed priorities, one 30 s lifetime, one relay revived | all held with no frames sent; the 30 s message Expired; the rest delivered urgent first; heal to first delivery worst 22.3 s, to last 31.3 s |
+| S11 | urgent saturation at loads 2 to 32, one routine message | routine handed over within 3 handovers at every load (bound 7) |
+| S12 | relay killed on its hop acknowledgment (diamond) | re-sent by the origin shadow with `RESEND`, delivered once, one Delivered event; 34.3 s from kill to delivery (seed 1) |
+| S12L | same on a line, relay revived after 15 s | delivered once through the revived relay, zero loops, 50 of 50 seeds (after the two fixes in 9.3) |
+| S14 | 136 submits into a 64-record store | 72 evictions in the specified order, 7 refusals, counters and events agree (seed 1) |
+
+Every run checks the route graph for loops at each sample and the per-hop metric identity (a node's metric equals its link ETX plus the next hop's metric): zero violations over all sweeps. Every message scenario also checks the four invariants of Section 4: no duplicate delivery to an application, exactly one terminal state and at most one Delivered per originated message, no DATA hop count above the node count, and every disappearance of a stored record matched to an observed custody transfer, expiry or counted eviction. Sweep CSVs with one row per run and one row per message are in `sim/results/`.
+
+### 9.3 Deviations and findings
+
+Design decisions are folded into SPEC.md Revision 2 and marked "(Rev. 2)" there. The rest are code facts and cleanup candidates:
+
+- **Route requests could not reach a far destination** (fixed). Requests were flooded with the generic 4-hop limit, so after a failure a node more than four hops from the destination never received the sequence-number bump and stayed without a route while a path existed: 25 of 200 S6 seeds, every one with a post-kill diameter of 5 to 9. SPEC 6.4 now gives `ROUTE_REQ` its own limit `LMESH_ROUTE_REQ_HOPS` (default `LMESH_MAX_NODES`) and raises the `STATUS` limit to `LMESH_MAX_HOPS`. The failing seeds are kept in `sim/regression_seeds.txt` and pass.
+- **The destination confirmed messages it never delivered** (fixed). The 32-bit duplicate window treated an id more than 32 behind the newest as a duplicate, answered it with a DELIVERED receipt, and dropped it; under urgent saturation (S11, load 32) hop backoff delayed urgent messages past 32 newer ids in 13 of 200 runs, 46 messages. The window is now 128 bits, an id older than the window is accepted and counted (`dedup_outside`), and the last four command results per origin are kept for receipt replay (SPEC 9.6 Rev. 2).
+- **The origin's re-send died at the first relay** (fixed). A relay answered DUPLICATE from its forward cache for any copy it had forwarded before, including the origin's `RESEND` copy, so a message lost beyond the first hop (relay killed while holding the only copy, S12L) could never be recovered on a line. A relay now accepts a `RESEND` copy that is only in its cache and forwards it with the bit preserved (SPEC 9.6 Rev. 2).
+- **A relay rebooting faster than the miss limit caused a short loop** (fixed). The rebooted node had no feasibility distance and adopted its neighbor's route that still pointed back through its old self, a 1 to 2 s loop in 23 of 50 S12L seeds. Three additions in SPEC 7.3 and 8.3 Rev. 2: restart detection from the HELLO sequence and own sequence number, a complete HELLO replaces the neighbor's whole vector, and an echo filter ignores finite routes from a neighbor whose vector predates the receiver's current sequence number. Zero loops in 50 S12L seeds and no change to the S3, S4, S5, S6 and S13 sweeps.
+- **Origin overload is reported as refusal and as eviction.** S9 submits one message per second over 30 % loss links, more than one hop in flight can carry, so the origin's store fills with normal-priority copies; a normal submit then returns `LMESH_ERR_FULL` (correct per SPEC 9.7, and S9 counts it as a metric). Before the store fills, arrivals evict origin shadows nearest expiry, so a delivered message can be reported Failed/evicted at the origin and its receipt then finds no record: 13.6 % of messages in the pre-fix S9 sweep. See open item 16.
+- **HELLO collisions can fake a neighbor loss.** With half-duplex receivers and no channel sensing, two neighbors whose HELLO timers line up for three consecutive periods lose each other's HELLOs and declare each other down (S3 seeds 46, 47, 115, traced to a 120 ms overlap three periods running). This is the medium, not the routing; a channel-busy check on the real radio or a collision model in the simulator (SPEC Section 16) would show how much of it survives on air.
+- **Half-duplex loss shows in the metric.** Even at 0 % configured loss, links show ETX 1.1 to 1.25 after a dropped HELLO, so the simulator checks the metric exactly only on links with no recent drop and counts the rest as perturbed.
+- **Relay forward cache API.** `lmesh_dedup_relay_accept` inserted on lookup, which would have lost a message that a relay then refused for a full store; it is now split into `lmesh_dedup_relay_seen` and `lmesh_dedup_relay_remember`, and the message layer records a forward only after custody passes.
+- **Frame decode** reports every error as `LMESH_ERR_ARG`; the counters distinguish bad tag, foreign network, and malformed.
+- **Host events** `boot` and `status` carry fewer fields than SPEC 11.2 (`boot` has no id, net, or reset flag; `status` carries only the node id, the full row comes from `nodes`); `last_heard_ms` in query rows is an absolute clock value.
+- **Route table** pagination never triggers at the default sizes (16 destinations fit one HELLO), and a metric saturated at 254 can be infeasible against a feasibility distance of 254.
+- **Status**: an older status arriving late can overwrite a newer one (no sequence check); `lmesh_status_now` sends without rescheduling the periodic one.
+- **Link**: a frame already in flight to a neighbor that is declared down runs out its retries before being reported; `lmesh_link_cancel` returns false both for "on the air" and for "not queued", so `lmesh_cancel` answers `LMESH_ERR_STATE` in both cases.
+- **Node**: `lmesh_radio_rx` does not refresh `now_ms`, so times stamped during receive are up to one tick (1 s) stale; lifetime accounting errs on the safe side.
+- **Simulator conventions**: `lmesh_sim <scenario> [seed] [csv]` runs one scenario and appends a metrics row; `lmesh_sim sweep <scenario> <n> [--known file]` runs seeds 1 to n, skipping seeds listed in the file; `lmesh_sim regress <file>` re-runs the listed seeds; `-v` or `LMESH_SIM_VERBOSE` prints every node's event stream. CTest registers seed 1 of every scenario and 20-seed sweeps of S3, S6, S9 and S11; the host build defaults to Release so the suite runs in under half a minute.
+

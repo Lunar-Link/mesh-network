@@ -1,8 +1,9 @@
-/* Neighbor table: liveness from missed HELLOs and failed unicasts, HELLO loss bitmap, bidirectional ETX. */
+/* Neighbor table: liveness from missed HELLOs and failed unicasts, restart detection, HELLO loss bitmap, bidirectional ETX. */
 #include <string.h>
 
 #include "hello.h"
 #include "link.h"
+#include "message.h"
 #include "neighbor.h"
 #include "route.h"
 
@@ -12,6 +13,7 @@ _Static_assert(LMESH_ETX_WINDOW >= 2 && LMESH_ETX_WINDOW <= 16, "the HELLO recep
 #define PESSIMISTIC_BITMAP ((uint16_t)((1u << (LMESH_ETX_WINDOW / 2)) - 1u))
 #define DOWN_AFTER_MS \
     ((uint32_t)LMESH_HELLO_MISS_LIMIT * (uint32_t)LMESH_HELLO_PERIOD_MS * (100u + LMESH_HELLO_JITTER_PCT) / 100u)
+#define HELLO_SEQ_TOLERANCE 2u
 #define ETX8_MIN 8u
 #define ETX8_MAX 254u
 #define ETX8_BAND_LOW 12u
@@ -161,6 +163,7 @@ void lmesh_neighbor_hello_seen(lmesh_node *node, lmesh_neighbor *n, uint8_t hell
         n->up = true;
         n->fail_count = 0;
         emit_neighbor(node, LMESH_EV_NEIGHBOR_UP, n);
+        lmesh_message_route_event(node, n->id);
         lmesh_link_neighbor_reset(node, n->id);
         lmesh_hello_trigger(node);
         return;
@@ -171,6 +174,24 @@ void lmesh_neighbor_hello_seen(lmesh_node *node, lmesh_neighbor *n, uint8_t hell
     if (etx_band(n->etx8) != old_band) {
         emit_neighbor(node, LMESH_EV_LINK_QUALITY, n);
     }
+}
+
+bool lmesh_neighbor_restart_check(lmesh_node *node, lmesh_neighbor *n, uint8_t hello_seq, uint16_t own_seqno)
+{
+    bool seqno_changed = n->own_seqno_valid && own_seqno != n->own_seqno;
+    n->own_seqno = own_seqno;
+    n->own_seqno_valid = true;
+    if (!n->up) {
+        return seqno_changed;
+    }
+    uint8_t gap = (uint8_t)(hello_seq - n->last_hello_seq);
+    bool backward = gap >= 0x80u && gap < (uint8_t)(0x100u - HELLO_SEQ_TOLERANCE);
+    bool continuous = gap >= 1u && gap <= LMESH_ETX_WINDOW;
+    if (backward || (seqno_changed && !continuous)) {
+        declare_down(node, n);
+        return true;
+    }
+    return seqno_changed;
 }
 
 void lmesh_neighbor_link_result(lmesh_node *node, lmesh_node_id id, bool ok)
