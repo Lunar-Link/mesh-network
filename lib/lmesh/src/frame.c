@@ -23,7 +23,7 @@ static void cmac_double(const uint8_t in[16], uint8_t out[16])
     for (unsigned i = 0; i < 15; i++) {
         out[i] = (uint8_t)((in[i] << 1) | (in[i + 1] >> 7));
     }
-    out[15] = (uint8_t)((in[15] << 1) ^ (carry ? 0x87u : 0x00u));
+    out[15] = (uint8_t)(((unsigned)in[15] << 1) ^ (carry ? 0x87u : 0x00u));
 }
 
 void lmesh_cmac128(const uint8_t key[16], const uint8_t *data, size_t len, uint8_t mac[16])

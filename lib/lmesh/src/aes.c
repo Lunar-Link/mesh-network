@@ -24,7 +24,7 @@ static const uint8_t rcon[10] = {0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80,
 
 static uint8_t xtime(uint8_t x)
 {
-    return (uint8_t)((x << 1) ^ ((x & 0x80u) ? 0x1bu : 0x00u));
+    return (uint8_t)(((unsigned)x << 1) ^ ((x & 0x80u) ? 0x1bu : 0x00u));
 }
 
 void lmesh_aes128_init(lmesh_aes128 *ctx, const uint8_t key[16])

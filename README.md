@@ -13,14 +13,19 @@ Node software for the Resilient Lunar Surface Communications Network capstone: a
 
 ```
 mesh-network/
-  include/lmesh/      public headers, included by the platform and the application
-  src/                library modules, one per protocol concern
+  platformio.ini      board build: Nucleo-L476RG (STM32L476RG), STM32Cube HAL
+  src/                board application: main, and later the platform port and radio glue
+  include/            board application headers (pins, radio settings), created when needed
+  lib/lmesh/          the protocol library, found by PlatformIO automatically
+    library.json        manifest and the library's compiler flags
+    include/lmesh/      public headers, included by the platform and the application
+    src/                library modules, one per protocol concern
   sim/                host simulator: virtual clock and medium, scenario runner
   tests/unit/         host unit tests
   CMakeLists.txt      host build: library, simulator, tests
 ```
 
-`src/` and `include/` follow the PlatformIO library layout so the folder can later be a dependency of a board firmware project without rearranging it. The simulator and tests sit outside `src/` and are never compiled into firmware.
+The folder is a PlatformIO project: `src/` is the firmware and `lib/lmesh/` is the library in the PlatformIO library layout, so it can also be a dependency of another project. The simulator and tests build only with CMake on the host and are never compiled into firmware. The library has no radio or board code; that belongs in `src/` behind the port in `lmesh_port.h`.
 
 ### Public headers
 
@@ -92,8 +97,18 @@ ctest --test-dir build --output-on-failure
 
 CTest runs the twelve unit tests, seed 1 of every scenario, and 20-seed sweeps of S3, S6, S9 and S11. The build defaults to Release; a sweep of 200 seeds takes seconds.
 
+The board firmware builds with PlatformIO (the VS Code extension, or `pio` from its core):
+
+```
+pio run
+pio run -t upload
+pio device monitor
+```
+
+The first run downloads the ST platform, the ARM GCC toolchain and the STM32Cube L4 framework. `src/main.c` is an empty application until the platform port is written; the library compiles into it with warnings as errors on the ARM compiler too.
+
 Warnings are errors on every target. Override a parameter with, for example, `-DCMAKE_C_FLAGS=-DLMESH_STORE_SIZE=32`.
 
 ## Conventions
 
-C11, no dynamic allocation, no radio names in `src/`, American English, and minimal comments: one line at the top of a file saying what it is, and a line before a large section when its purpose is not evident.
+C11, no dynamic allocation, no radio names in `lib/lmesh/`, American English, and minimal comments: one line at the top of a file saying what it is, and a line before a large section when its purpose is not evident.
