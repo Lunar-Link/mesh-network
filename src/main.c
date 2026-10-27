@@ -3,6 +3,7 @@
 #include "console.h"
 #include "port.h"
 #include "radio.h"
+#include "storage.h"
 
 static lmesh_node node;
 
@@ -15,6 +16,7 @@ int main(void)
     HAL_Init();
     board_init();
     console_init();
+    storage_init();
     radio_init();
     port_init(&port);
     port_identity(&ident);

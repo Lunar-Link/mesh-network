@@ -1,4 +1,4 @@
-/* Platform port: SysTick clock, hardware random numbers, the selected radio driver, battery sense. */
+/* Platform port: SysTick clock, hardware random numbers, the selected radio driver, battery sense, flash storage. */
 #include "port.h"
 
 #include <string.h>
@@ -6,6 +6,7 @@
 #include "board.h"
 #include "node_config.h"
 #include "radio.h"
+#include "storage.h"
 
 _Static_assert(NODE_ID >= 1 && NODE_ID <= 254, "NODE_ID must be 1 to 254");
 _Static_assert(sizeof STATION_ID - 1 <= LMESH_STATION_ID_MAX, "STATION_ID is too long");
@@ -53,6 +54,18 @@ static uint16_t port_battery_mv(void *ctx)
     return board_battery_mv();
 }
 
+static int port_storage_read(void *ctx, uint8_t slot, void *buf, size_t len)
+{
+    (void)ctx;
+    return storage_read(slot, buf, len);
+}
+
+static int port_storage_write(void *ctx, uint8_t slot, const void *buf, size_t len)
+{
+    (void)ctx;
+    return storage_write(slot, buf, len);
+}
+
 void port_init(lmesh_port *port)
 {
     memset(port, 0, sizeof *port);
@@ -61,6 +74,8 @@ void port_init(lmesh_port *port)
     port->radio_send = port_radio_send;
     port->airtime_ms = port_airtime_ms;
     port->battery_mv = port_battery_mv;
+    port->storage_read = port_storage_read;
+    port->storage_write = port_storage_write;
 }
 
 void port_identity(lmesh_identity *ident)
