@@ -1,11 +1,13 @@
-/* Board setup for the Nucleo-L476RG: 80 MHz clock, pins, SPI, I2C, UART, ADC, and the radio interrupt line. */
+/* Board setup for the Nucleo-L476RG: 80 MHz clock, pins, SPI, I2C, UARTs, ADC, RNG, and the radio interrupt line. */
 #include "board.h"
 
 SPI_HandleTypeDef board_radio_spi;
 SPI_HandleTypeDef board_aux_spi;
 I2C_HandleTypeDef board_sensor_i2c;
 UART_HandleTypeDef board_host_uart;
+UART_HandleTypeDef board_radio_uart;
 ADC_HandleTypeDef board_adc;
+RNG_HandleTypeDef board_rng;
 
 static void fail(void)
 {
@@ -130,11 +132,10 @@ static void i2c_init(void)
     }
 }
 
-static void uart_init(void)
+static void uart_init(UART_HandleTypeDef *h, USART_TypeDef *instance, uint32_t baud)
 {
-    UART_HandleTypeDef *h = &board_host_uart;
-    h->Instance = HOST_UART;
-    h->Init.BaudRate = HOST_UART_BAUD;
+    h->Instance = instance;
+    h->Init.BaudRate = baud;
     h->Init.WordLength = UART_WORDLENGTH_8B;
     h->Init.StopBits = UART_STOPBITS_1;
     h->Init.Parity = UART_PARITY_NONE;
@@ -182,6 +183,28 @@ static void adc_init(void)
     }
 }
 
+/* The RNG needs a 48 MHz clock: PLLSAI1 from the 4 MHz MSI, x24 to 96 MHz, Q divides by 2. */
+static void rng_init(void)
+{
+    RCC_PeriphCLKInitTypeDef p = {0};
+    p.PeriphClockSelection = RCC_PERIPHCLK_RNG;
+    p.RngClockSelection = RCC_RNGCLKSOURCE_PLLSAI1;
+    p.PLLSAI1.PLLSAI1Source = RCC_PLLSOURCE_MSI;
+    p.PLLSAI1.PLLSAI1M = 1;
+    p.PLLSAI1.PLLSAI1N = 24;
+    p.PLLSAI1.PLLSAI1P = RCC_PLLP_DIV7;
+    p.PLLSAI1.PLLSAI1Q = RCC_PLLQ_DIV2;
+    p.PLLSAI1.PLLSAI1R = RCC_PLLR_DIV2;
+    p.PLLSAI1.PLLSAI1ClockOut = RCC_PLLSAI1_48M2CLK;
+    if (HAL_RCCEx_PeriphCLKConfig(&p) != HAL_OK) {
+        fail();
+    }
+    board_rng.Instance = RNG;
+    if (HAL_RNG_Init(&board_rng) != HAL_OK) {
+        fail();
+    }
+}
+
 void board_init(void)
 {
     clock_init();
@@ -189,8 +212,15 @@ void board_init(void)
     spi_init(&board_radio_spi, RADIO_SPI, RADIO_SPI_PRESCALER);
     spi_init(&board_aux_spi, AUX_SPI, AUX_SPI_PRESCALER);
     i2c_init();
-    uart_init();
+    uart_init(&board_host_uart, HOST_UART, HOST_UART_BAUD);
+    uart_init(&board_radio_uart, RADIO_UART, RADIO_UART_BAUD);
     adc_init();
+    rng_init();
+}
+
+void board_radio_reset(bool asserted)
+{
+    HAL_GPIO_WritePin(RADIO_RESET_PORT, RADIO_RESET_PIN, asserted ? GPIO_PIN_RESET : GPIO_PIN_SET);
 }
 
 uint16_t board_battery_mv(void)
@@ -238,6 +268,19 @@ void HAL_UART_MspInit(UART_HandleTypeDef *h)
         alternate(HOST_RX_PORT, HOST_RX_PIN, GPIO_AF7_USART2, GPIO_MODE_AF_PP, GPIO_NOPULL);
         HAL_NVIC_SetPriority(HOST_UART_IRQN, 6, 0);
         HAL_NVIC_EnableIRQ(HOST_UART_IRQN);
+    } else if (h->Instance == RADIO_UART) {
+        __HAL_RCC_UART4_CLK_ENABLE();
+        alternate(RADIO_UART_TX_PORT, RADIO_UART_TX_PIN, GPIO_AF8_UART4, GPIO_MODE_AF_PP, GPIO_NOPULL);
+        alternate(RADIO_UART_RX_PORT, RADIO_UART_RX_PIN, GPIO_AF8_UART4, GPIO_MODE_AF_PP, GPIO_PULLUP);
+        HAL_NVIC_SetPriority(RADIO_UART_IRQN, 5, 0);
+        HAL_NVIC_EnableIRQ(RADIO_UART_IRQN);
+    }
+}
+
+void HAL_RNG_MspInit(RNG_HandleTypeDef *h)
+{
+    if (h->Instance == RNG) {
+        __HAL_RCC_RNG_CLK_ENABLE();
     }
 }
 

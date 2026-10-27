@@ -16,6 +16,11 @@ void USART2_IRQHandler(void)
     HAL_UART_IRQHandler(&board_host_uart);
 }
 
+void UART4_IRQHandler(void)
+{
+    HAL_UART_IRQHandler(&board_radio_uart);
+}
+
 void HardFault_Handler(void)
 {
     for (;;) {

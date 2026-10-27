@@ -106,7 +106,9 @@ P1 to P5 need no hardware. P6 can start as soon as boards arrive, in parallel wi
 
 - `platformio.ini` at the root defines the `nucleo_l476rg` environment (ST-LINK upload and debug, 115200 baud monitor). `src/main.c` is an empty application that initializes the HAL and services SysTick; it builds and links at 588 bytes of flash.
 - The library lives in `lib/lmesh/` with its `library.json`, so PlatformIO compiles it automatically with `-Wall -Wextra -Werror -Wshadow -Wconversion` on the ARM compiler. The first board build caught three sign-conversion idioms that GCC 15 on the host accepted; the ARM toolchain PlatformIO ships is older and stricter, which is a feature.
-- Next in P6: implement `lmesh_port` in `src/` for the chosen radio module (SPI driver, transmit-done interrupt, airtime estimate, optional channel activity detection), provision identity from a flash page or a build flag during bring-up, wire the line protocol to the ST-LINK virtual COM port, and call `lmesh_tick()` from the main loop with sleep until `lmesh_next_wake_ms()`.
+- *27 October 2026.* The port is in `src/port.c` (SysTick clock, hardware RNG, battery), the line protocol runs on the ST-LINK virtual COM port (`src/console.c`, interrupt-driven rings in `src/serial.c`), the identity comes from `-D` flags (`include/node_config.h`), and `main.c` ticks the library when due or after input and sleeps on `__WFI` between interrupts. Radio drivers implement `include/radio.h`, one folder each under `src/radio/`, chosen by the PlatformIO environment's `build_src_filter`. The first driver is for the REYAX RYLR999 (`rylr999` environment); `none` runs without a radio. Not yet run on a board.
+- RYLR999 driver: AT commands at 115200 on UART4 (A0/A1), reset on D9. At start it queries network id, band, RF parameters, power and mode and writes only those that differ (the module keeps them in flash, 10k cycles). Frames go out as `AT+SEND=0,...` (broadcast at the module level; the library does its own addressing) in base64url, because the module takes ASCII payloads only: a 120-byte frame becomes 160 characters, and the module adds 8 bytes on air. Default SF8, 125 kHz, CR 4/5, preamble 12, 915 MHz, +10 dBm. The airtime estimate is Semtech's formula on the encoded length plus the UART transfer and a 20 ms margin: 526 ms for a 120-byte frame, 208 ms for 30 bytes. The module's `+OK` may come before the frame has left, so transmit done is reported at the later of `+OK` and the estimate. A host harness (not in the repository) checked bring-up, every frame length from 1 to 120 bytes, `+ERR` and timeout recovery, and bad `+RCV` lines.
+- Next in P6: run on two boards with the RYLR999; measure airtime and `+OK` timing against the estimate; then storage in a flash page (slots 0 to 2) and the four-board, two-hop exit test.
 - The PlatformIO `native` environment can run the same unit tests with `pio test` if the team prefers one tool; the CMake host build stays as the simulator runner.
 - Radio-specific decisions (frame size the radio supports, airtime model, channel sensing) are made in the port and must not leak into `lib/lmesh/`.
 
@@ -118,7 +120,9 @@ P1 to P5 need no hardware. P6 can start as soon as boards arrive, in parallel wi
 | Radio select, reset, interrupt | GPIO, EXTI15_10 | PB6 NSS (D10), PC7 reset (D9), PA10 DIO0 (D2) | NSS and reset idle high; DIO0 rising edge with a pull-down. |
 | Second SPI | SPI2, 8-bit mode 0, 5 MHz | PB13 SCK, PC2 MISO, PC3 MOSI, PB12 NSS | Morpho headers; reserved for storage or a second radio. |
 | Sensor bus | I2C1, 100 kHz | PB8 SCL (D15), PB9 SDA (D14) | Arduino I2C position. |
+| UART radio | UART4, 115200 8N1 | PA0 TX (A0), PA1 RX (A1) | AT-command modules such as the RYLR999; they use the radio reset line PC7 (D9) too. |
 | Line protocol | USART2, 115200 8N1 | PA2 TX, PA3 RX | The ST-LINK virtual COM port, so a laptop needs only the USB cable. |
+| Random numbers | RNG, 48 MHz from PLLSAI1 | — | Seeds the protocol's jitter. |
 | Battery sense | ADC1 channel 1, 12-bit | PC0 (A5) | Through a 2:1 divider set in `board.h`; `board_battery_mv()` returns millivolts, 0 when the read fails. |
 | User button | GPIO input | PC13 | |
 
@@ -148,6 +152,9 @@ Each has a working assumption so that work proceeds.
 | 14 | Eviction of an in-flight record (Rev. 2) | The store can evict a record that the link layer is transmitting; an origin record then reports Failed even if the hop accepts it, and the late link result is ignored. Working assumption: rare, since eviction only happens with a full store; exclude in-flight records from eviction if S14 or the bench shows it. |
 | 15 | `delivered` counter (Rev. 2) | Counts both messages delivered to the application here and this node's own messages confirmed by receipt. Working assumption: fine for `stats`; the simulator computes delivery ratio from events. Split it if the campaign needs the two separately. |
 | 16 | Shadow eviction under origin overload (Rev. 2) | SPEC 9.7 evicts origin shadows before refusing a submit, so under overload the origin reports Failed/evicted for messages that are in the network and may deliver. Options: refuse the submit before evicting a shadow (the application is told, nothing already sent loses its tracking), or a distinct terminal reason the interface shows as "sent, unconfirmed". Working assumption: keep SPEC 9.7 until the bench shows sustained overload; the demo traffic is far below it. |
+| 17 | Platform events on the line protocol (27 Oct) | The firmware adds `{"ev":"radio",...}` lines (driver ready or error) and `{"ev":"error","what":"lmesh_init"}`, which SPEC 11.2 does not list. Working assumption: add them to SPEC 11.2 once the bench settles their fields. |
+| 18 | RYLR999 transmit-done timing (27 Oct) | The AT guide does not say whether `+OK` after `AT+SEND` means the frame has left. The driver reports done at the later of `+OK` and its airtime estimate; `+ERR=17` (last TX not completed) on the next send would show the estimate is short. Measure on the bench. |
+| 19 | RYLR999 band (27 Oct) | The module covers 820 to 960 MHz, not the 433 MHz the RF study chose, so it is a bench radio for protocol tests; range results from it do not transfer to the 433 MHz design. Under Part 97 the 902 to 928 MHz band needs `STATION_ID` set to the callsign. |
 
 ---
 
@@ -178,7 +185,7 @@ Each has a working assumption so that work proceeds.
 | P3 Routing | Done. S1 to S6 pass; S3 and S6 pass 200 of 200 seeds after the route-request hop-limit fix below. |
 | P4 Messaging | Done. `store`, `dedup`, `message` unit-tested (456 checks in `test_message` alone); S7 to S12, S12L and S14 pass; S9, S10 and S11 pass 200 of 200 seeds, S8, S12, S12L and S14 50 of 50. |
 | P5 Status and interface | Code done: `status`, `host` unit-tested; S13 passes. The scripted interface session is not written. |
-| P6 Target build | Started: PlatformIO project for the Nucleo-L476RG builds with an empty main; the library compiles clean on the ARM toolchain. Port not written. |
+| P6 Target build | Started: PlatformIO project for the Nucleo-L476RG; port, line protocol and RYLR999 driver written and building (27 Oct), not yet run on a board. Storage port not written. |
 | P7 Bench | Not started. |
 
 ### 9.2 Measurements from the simulator (defaults, seed sweeps of 200)

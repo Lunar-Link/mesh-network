@@ -2,7 +2,7 @@
 
 Node software for the Resilient Lunar Surface Communications Network capstone: a portable C library that makes a set of identical radio nodes discover each other, route around failures, and carry messages through outages until they can be delivered and confirmed. It is written to the brief's requirements and is independent of the radio and the microcontroller.
 
-**Status (26 October 2026):** every layer is implemented and unit-tested on the host, and all fourteen simulator scenarios of PLAN.md Section 5 pass, with the routing and messaging sweeps at 200 of 200 seeds. Nothing has run on a board yet; the target build (PLAN.md Section 6) is the next phase. This is a starting point to be improved.
+**Status (27 October 2026):** every layer is implemented and unit-tested on the host, and all fourteen simulator scenarios of PLAN.md Section 5 pass, with the routing and messaging sweeps at 200 of 200 seeds. The board firmware now has the platform port, the line protocol on the USB serial port, and a driver for the REYAX RYLR999 radio; it builds but has not yet run on a board. This is a starting point to be improved.
 
 | Document | Contents |
 |---|---|
@@ -13,9 +13,10 @@ Node software for the Resilient Lunar Surface Communications Network capstone: a
 
 ```
 mesh-network/
-  platformio.ini      board build: Nucleo-L476RG (STM32L476RG), STM32Cube HAL
-  src/                board application: main.c, board.c (clock, pins, SPI, I2C, UART, ADC), stm32l4xx_it.c (interrupt handlers); the platform port comes next
-  include/            board.h, the pin map and peripheral handles
+  platformio.ini      board build: Nucleo-L476RG (STM32L476RG), STM32Cube HAL, one environment per radio driver
+  src/                board application and platform port (table below)
+    radio/<driver>/     one folder per radio driver; the build environment picks one
+  include/            firmware headers: pin map, port, radio interface, node identity
   lib/lmesh/          the protocol library, found by PlatformIO automatically
     library.json        manifest and the library's compiler flags
     include/lmesh/      public headers, included by the platform and the application
@@ -55,6 +56,21 @@ The folder is a PlatformIO project: `src/` is the firmware and `lib/lmesh/` is t
 | `host.c` | interface | Line protocol: command parser, JSON formatting of events and table dumps. |
 | `node.c` | glue | Initialization, tick, dispatch of received frames to modules, event delivery, queries. |
 | `internal.h` | all | Byte-order helpers, wrap-safe time comparison, shared helpers. |
+
+### Firmware
+
+| File | Contents |
+|---|---|
+| `src/main.c` | Start-up and the main loop: console, radio, `lmesh_tick()` when due or after input, sleep between interrupts. |
+| `src/board.c`, `include/board.h` | 80 MHz clock, pin map, radio SPI and UART, I2C, USB serial, battery ADC, hardware RNG, radio reset line. |
+| `src/port.c` | The `lmesh_port` functions: SysTick clock, hardware random numbers, the radio driver, battery voltage; the node identity. |
+| `src/console.c` | Line protocol on the ST-LINK virtual COM port: command lines in, replies and events out, never blocking. |
+| `src/serial.c` | Interrupt-driven UART receive and transmit rings shared by the console and UART radios. |
+| `src/stm32l4xx_it.c` | Interrupt handlers. |
+| `include/radio.h` | The interface every radio driver implements: init, send, airtime estimate, poll. |
+| `include/node_config.h` | Node id, network id, network key and callsign, set per board with `-D` flags. |
+| `src/radio/rylr999/` | REYAX RYLR999 (868/915 MHz LoRa, AT commands over UART4): configures the module, sends frames as base64url text, parses `+RCV`, estimates airtime with Semtech's formula. |
+| `src/radio/none/` | No radio: frames go nowhere and complete after the simulator's airtime model. For testing the console on one board. |
 
 ### Simulator and tests
 
@@ -97,15 +113,25 @@ ctest --test-dir build --output-on-failure
 
 CTest runs the twelve unit tests, seed 1 of every scenario, and 20-seed sweeps of S3, S6, S9 and S11. The build defaults to Release; a sweep of 200 seeds takes seconds.
 
-The board firmware builds with PlatformIO (the VS Code extension, or `pio` from its core):
+The board firmware builds with PlatformIO (the VS Code extension, or `pio` from its core). Each radio driver has an environment; `rylr999` is the default and `none` runs without a radio:
 
 ```
 pio run
+pio run -e none
 pio run -t upload
 pio device monitor
 ```
 
-The first run downloads the ST platform, the ARM GCC toolchain and the STM32Cube L4 framework. `src/main.c` is an empty application until the platform port is written; the library compiles into it with warnings as errors on the ARM compiler too.
+Give each board its own node id at build time, and the callsign before transmitting (PowerShell shown):
+
+```
+$env:PLATFORMIO_BUILD_FLAGS='-DNODE_ID=2 -DSTATION_ID=\"N0CALL\"'
+pio run -t upload --upload-port COM5
+```
+
+On connect the node prints a `boot` event and, with the RYLR999, a `radio` event with `"state":"ready"` once the module is configured; then the commands of SPEC.md Section 11 work from any serial terminal.
+
+**RYLR999 wiring.** Module RXD_LoRa to A0 (PA0), TXD_LoRa to A1 (PA1), RST to D9 (PC7), GND to GND. The module needs 5 V at up to 950 mA at +30 dBm, more than the Nucleo's USB supply gives, so power it from a separate 5 V supply with grounds joined. The driver defaults to +10 dBm for the bench. The driver queries the module's settings at start and writes only those that differ, because the module keeps them in flash. RF settings are `-D` flags in `rylr999.c` and must match on every node. It never sets the module's `AT+CPIN` password, which would encrypt the link (not allowed under Part 97).
 
 Warnings are errors on every target. Override a parameter with, for example, `-DCMAKE_C_FLAGS=-DLMESH_STORE_SIZE=32`.
 

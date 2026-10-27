@@ -2,6 +2,8 @@
 #ifndef BOARD_H
 #define BOARD_H
 
+#include <stdbool.h>
+
 #include "stm32l4xx_hal.h"
 
 /* Radio on SPI1 with the pins most LoRa shields use on the Arduino header */
@@ -20,6 +22,15 @@
 #define RADIO_DIO0_PORT GPIOA
 #define RADIO_DIO0_PIN GPIO_PIN_10 /* D2, rising edge on transmit done and receive done */
 #define RADIO_DIO0_IRQN EXTI15_10_IRQn
+
+/* UART radios (AT-command modules) on UART4 at the Arduino A0/A1 pins; they share the reset line above */
+#define RADIO_UART UART4
+#define RADIO_UART_IRQN UART4_IRQn
+#define RADIO_UART_BAUD 115200u
+#define RADIO_UART_TX_PORT GPIOA
+#define RADIO_UART_TX_PIN GPIO_PIN_0 /* A0, to the module's RXD */
+#define RADIO_UART_RX_PORT GPIOA
+#define RADIO_UART_RX_PIN GPIO_PIN_1 /* A1, from the module's TXD */
 
 /* Second SPI on the Morpho headers for storage or a second radio */
 #define AUX_SPI SPI2
@@ -66,9 +77,12 @@ extern SPI_HandleTypeDef board_radio_spi;
 extern SPI_HandleTypeDef board_aux_spi;
 extern I2C_HandleTypeDef board_sensor_i2c;
 extern UART_HandleTypeDef board_host_uart;
+extern UART_HandleTypeDef board_radio_uart;
 extern ADC_HandleTypeDef board_adc;
+extern RNG_HandleTypeDef board_rng;
 
 void board_init(void);
 uint16_t board_battery_mv(void);
+void board_radio_reset(bool asserted);
 
 #endif
