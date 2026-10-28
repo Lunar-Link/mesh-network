@@ -44,6 +44,10 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     target_link_libraries(lmesh_sim PRIVATE lmesh)
     lmesh_warnings(lmesh_sim)
 
+    add_executable(lmesh_console sim/sim_net.c sim/sim_topo.c sim/sim_console.c)
+    target_link_libraries(lmesh_console PRIVATE lmesh)
+    lmesh_warnings(lmesh_console)
+
     function(lmesh_add_test name)
         add_executable(${name} ${ARGN})
         target_link_libraries(${name} PRIVATE lmesh)
