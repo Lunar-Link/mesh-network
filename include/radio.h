@@ -14,6 +14,8 @@ void radio_init(void);
 int radio_send(const uint8_t *frame, size_t len);
 /* Estimated time from radio_send to transmit done for a frame of len bytes. */
 uint32_t radio_airtime_ms(size_t len);
+/* Optional: senses the channel just before a queued frame, blocking for the sensing time. Drivers without it omit it. */
+bool radio_channel_busy(void);
 /* Runs the driver from the main loop and hands received frames and transmit results to the library; true if it did. */
 bool radio_poll(lmesh_node *node);
 

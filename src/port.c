@@ -11,6 +11,9 @@
 _Static_assert(NODE_ID >= 1 && NODE_ID <= 254, "NODE_ID must be 1 to 254");
 _Static_assert(sizeof STATION_ID - 1 <= LMESH_STATION_ID_MAX, "STATION_ID is too long");
 
+/* Weak so a driver without channel sensing links with this left null, and the library never defers for it. */
+bool radio_channel_busy(void) __attribute__((weak));
+
 static uint32_t fallback;
 
 static uint32_t port_now_ms(void *ctx)
@@ -40,6 +43,12 @@ static int port_radio_send(void *ctx, const uint8_t *frame, size_t len)
 {
     (void)ctx;
     return radio_send(frame, len);
+}
+
+static bool port_radio_busy(void *ctx)
+{
+    (void)ctx;
+    return radio_channel_busy();
 }
 
 static uint32_t port_airtime_ms(void *ctx, size_t len)
@@ -72,6 +81,7 @@ void port_init(lmesh_port *port)
     port->now_ms = port_now_ms;
     port->random = port_random;
     port->radio_send = port_radio_send;
+    port->radio_busy = radio_channel_busy != NULL ? port_radio_busy : NULL;
     port->airtime_ms = port_airtime_ms;
     port->battery_mv = port_battery_mv;
     port->storage_read = port_storage_read;

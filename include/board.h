@@ -22,6 +22,8 @@
 #define RADIO_DIO0_PORT GPIOA
 #define RADIO_DIO0_PIN GPIO_PIN_10 /* D2, rising edge on transmit done and receive done */
 #define RADIO_DIO0_IRQN EXTI15_10_IRQn
+#define RADIO_BUSY_PORT GPIOA
+#define RADIO_BUSY_PIN GPIO_PIN_9 /* D8, handshake from SPI radios that have one */
 
 /* UART radios (AT-command modules) on UART4 at the Arduino A0/A1 pins; they share the reset line above */
 #define RADIO_UART UART4

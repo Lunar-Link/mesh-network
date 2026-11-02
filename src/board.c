@@ -89,6 +89,11 @@ static void gpio_init(void)
     HAL_NVIC_SetPriority(RADIO_DIO0_IRQN, 5, 0);
     HAL_NVIC_EnableIRQ(RADIO_DIO0_IRQN);
 
+    g.Pin = RADIO_BUSY_PIN;
+    g.Mode = GPIO_MODE_INPUT;
+    g.Pull = GPIO_PULLDOWN;
+    HAL_GPIO_Init(RADIO_BUSY_PORT, &g);
+
     g.Pin = BUTTON_PIN;
     g.Mode = GPIO_MODE_INPUT;
     g.Pull = GPIO_NOPULL;
