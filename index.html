@@ -51,6 +51,8 @@ tr.stale td { color: var(--stale); }
 #map { width: 100%; height: 300px; display: block; }
 #map text { fill: var(--text); font-size: 12px; text-anchor: middle; dominant-baseline: central; }
 #map .lbl { fill: var(--muted); font-size: 10px; }
+#map .hit { cursor: pointer; }
+#map .hit:hover circle { stroke-width: 4; fill: #eef3fb; }
 form.send { display: grid; grid-template-columns: 70px 120px 100px 90px 1fr auto; gap: 8px; margin-bottom: 10px; }
 form.send label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 2px; }
 form.send input, form.send select { width: 100%; }
@@ -70,7 +72,7 @@ form.send .go { align-self: end; }
 .console-bar { display: flex; gap: 8px; margin-top: 6px; align-items: center; }
 .console-bar input[type=text] { flex: 1; font-family: var(--mono); }
 .console-bar label { color: var(--muted); font-size: 12px; display: flex; gap: 4px; align-items: center; }
-#banner { display: none; grid-column: span 12; background: #fff4f4; border: 1px solid var(--poor); color: var(--poor); padding: 8px 12px; }
+#banner, #down { display: none; grid-column: span 12; background: #fff4f4; border: 1px solid var(--poor); color: var(--poor); padding: 8px 12px; }
 #simbar { display: none; grid-column: span 12; }
 #simbar .nodes { display: flex; flex-wrap: wrap; gap: 6px; }
 #simbar .sn { display: flex; align-items: center; gap: 4px; border: 1px solid var(--line); padding: 3px 4px 3px 8px; }
@@ -94,9 +96,10 @@ form.send .go { align-self: end; }
 
 <main>
   <div id="banner"></div>
+  <div id="down"></div>
 
   <section id="simbar">
-    <h2>Simulator <span class="note">plug into any node, or kill one to watch the mesh route around it</span></h2>
+    <h2>Simulator <span class="note">plug into any node (or click it on the map), or kill one to watch the mesh route around it</span></h2>
     <div class="nodes" id="sim-nodes"></div>
     <div class="cut">Link
       <input id="cut-a" type="number" min="1" max="254" placeholder="a">
@@ -108,7 +111,7 @@ form.send .go { align-self: end; }
   </section>
 
   <section class="c5">
-    <h2>This node</h2>
+    <h2>This node <span id="self-state"></span></h2>
     <div class="kv" id="self"></div>
     <div class="scroll" style="margin-top:12px"><table id="frames"></table></div>
   </section>
@@ -116,7 +119,7 @@ form.send .go { align-self: end; }
   <section class="c7">
     <h2>Network <span class="count" id="net-count"></span></h2>
     <svg id="map" role="img" aria-label="Network map"></svg>
-    <div class="note muted" style="font-size:12px">Line color is link quality (ETX): green up to 1.5, amber up to 3, red above. Dashed: reported by a stale node.</div>
+    <div class="note muted" style="font-size:12px"><span id="map-hint"></span>Line color is link quality (ETX): green up to 1.5, amber up to 3, red above. Dashed: reported by a stale node.</div>
   </section>
 
   <section class="c12">
@@ -180,10 +183,35 @@ let st;
 function fresh() {
   return {
     ident: null, radio: null, links: [], routes: [], nodes: [], msgs: [], stats: null,
-    sent: new Map(), inbox: [], storeDepth: null, clock: null, sim: null,
+    sent: new Map(), inbox: [], storeDepth: null, clock: null, sim: null, down: false,
   };
 }
 st = fresh();
+let simIds = new Set();  // every simulator node seen this connection, so killed nodes stay on screen
+
+/* Live state the attached node reports; cleared when the simulator kills it. */
+function clearLive() {
+  Object.assign(st, { links: [], routes: [], nodes: [], msgs: [], stats: null, storeDepth: null });
+}
+
+/* Take in a simulator @topo reply and track whether the attached node is alive. */
+function noteSim(topo) {
+  topo.alive.forEach(id => simIds.add(id));
+  topo.links.forEach(([a, b]) => { simIds.add(a); simIds.add(b); });
+  const down = !topo.alive.includes(topo.attached);
+  if (st.down && !down) {
+    st = Object.assign(fresh(), { sim: topo });  // revived: the node restarted with empty tables
+    $("log").innerHTML = "";
+    log(`node ${topo.attached} revived`, "ev");
+  } else {
+    if (down && !st.down) { clearLive(); log(`node ${topo.attached} is down`, "err"); }
+    st.sim = topo;
+  }
+  st.down = down;
+}
+function simNodeIds() {
+  return [...simIds].filter(x => Number.isInteger(x) && x > 0 && x < 255).sort((a, b) => a - b);
+}
 
 /* Node clock: the latest event time plus elapsed wall time. */
 function nodeNow() {
@@ -327,20 +355,32 @@ function showBanner(text) {
 }
 
 /* Polling */
-let refreshing = false;
+let refreshing = false, refreshAgain = false;
+async function dump(line) {
+  const res = await command(line);
+  if (!res.rows) throw new Error(`${line}: ${res.reason || "no rows"}`);
+  return res.rows;
+}
 async function refresh() {
-  if (!transport || refreshing) return;
+  if (!transport) return;
+  if (refreshing) { refreshAgain = true; return; }
   refreshing = true;
   try {
+    // Topology first: a killed node answers nothing else, and the controls must still update.
+    if (st.sim) {
+      const topo = await command("@topo");
+      if (topo.ok) noteSim(topo);
+    }
+    if (st.down) { renderAll(); return; }
     if (!st.ident) {
       const id = await command("id");
       if (id.ok) { st.ident = id; renderIdent(); }
     }
-    st.links = (await command("links")).rows;
-    st.routes = (await command("routes")).rows;
-    st.nodes = (await command("nodes")).rows;
-    st.msgs = (await command("msgs")).rows;
-    st.stats = (await command("stats")).rows[0] || null;
+    st.links = await dump("links");
+    st.routes = await dump("routes");
+    st.nodes = await dump("nodes");
+    st.msgs = await dump("msgs");
+    st.stats = (await dump("stats"))[0] || null;
     for (const r of st.msgs) {
       if (st.ident && r.origin === st.ident.id && r.role !== "relay") {
         const key = `${r.origin}:${r.id}`;
@@ -349,15 +389,13 @@ async function refresh() {
         st.sent.set(key, m);
       }
     }
-    if (st.sim) {
-      const topo = await command("@topo");
-      if (topo.ok) st.sim = topo;
-    }
     renderAll();
   } catch (e) {
     if (transport) log(String(e.message || e), "err");
+    if (st.sim) scheduleRefresh();  // e.g. killed mid-poll: the next pass sees it via @topo
   } finally {
     refreshing = false;
+    if (refreshAgain && transport) { refreshAgain = false; setTimeout(refresh, 0); }
   }
 }
 setInterval(refresh, REFRESH_MS);
@@ -370,7 +408,14 @@ function start() {
 
 /* Rendering */
 function renderAll() {
-  renderIdent(); renderSelf(); renderMap(); renderNodes(); renderLinks(); renderRoutes(); renderSent(); renderInbox(); renderSim(); renderKnown();
+  renderDown(); renderIdent(); renderSelf(); renderMap(); renderNodes(); renderLinks(); renderRoutes(); renderSent(); renderInbox(); renderSim(); renderKnown();
+}
+
+function renderDown() {
+  const down = transport && st.down;
+  $("down").style.display = down ? "block" : "none";
+  if (down) $("down").textContent = `Node ${st.sim.attached} is down: it was killed in the simulator. Revive it, or click another node on the map to plug in.`;
+  $("self-state").innerHTML = down ? '<span class="badge b-poor">down</span>' : "";
 }
 
 function renderIdent() {
@@ -399,7 +444,7 @@ function renderSelf() {
   const reach = st.routes.filter(r => !r.retracted).length;
   const held = st.msgs.filter(m => m.role !== "history").length;
   const tiles = [
-    ["Uptime", now === null ? "—" : duration(now / 1000)],
+    ["Uptime", now === null || st.down ? "—" : duration(now / 1000)],
     ["Neighbors", st.ident ? `${up}` : "—"],
     ["Reachable", st.ident ? `${reach}` : "—"],
     ["Store", st.storeDepth ?? (st.ident ? held : "—")],
@@ -417,6 +462,9 @@ function renderSelf() {
     `<tr><td>Received</td>${FRAME_TYPES.map((_, i) => `<td>${s.rx_frames[i]}</td>`).join("")}</tr>`;
 }
 
+/* True when the simulator says this node is killed. */
+const simDead = id => !!(st.sim && st.sim.alive && !st.sim.alive.includes(id));
+
 function flagBadges(f) {
   const out = FLAGS.filter(([bit]) => f & bit).map(([, name, c]) => `<span class="badge b-${c}">${name}</span>`);
   return out.length ? out.join("") : `<span class="muted">ok</span>`;
@@ -425,12 +473,12 @@ function flagBadges(f) {
 function renderNodes() {
   const rows = [...st.nodes].sort((a, b) => a.node - b.node);
   if (!rows.length) {
-    $("nodes").innerHTML = `<tr><td class="empty">${transport ? "No status heard yet; each node broadcasts about once a minute." : "Connect to a node."}</td></tr>`;
+    $("nodes").innerHTML = `<tr><td class="empty">${transport ? st.down ? "Node is down." : "No status heard yet; each node broadcasts about once a minute." : "Connect to a node."}</td></tr>`;
     return;
   }
   $("nodes").innerHTML = `<tr><th>Node</th><th>Station</th><th>Battery</th><th>Uptime</th><th>Store</th><th>Lost</th><th>Health</th><th>Heard</th><th>Its neighbors (ETX)</th></tr>` +
     rows.map(n => `<tr class="${n.stale ? "stale" : ""}">
-      <td><b>${n.node}</b>${n.stale ? ' <span class="badge">stale</span>' : ""}</td>
+      <td><b>${n.node}</b>${simDead(n.node) ? ' <span class="badge b-poor">killed</span>' : n.stale ? ' <span class="badge">stale</span>' : ""}</td>
       <td>${esc(n.station || "—")}</td><td>${volts(n.batt_mv)}</td><td>${duration(n.uptime_s)}</td>
       <td>${n.store}</td><td>${n.lost}</td><td>${flagBadges(n.flags)}</td><td>${ago(n.heard_ms)}</td>
       <td class="wrap">${n.neighbors.map(([id, e]) => `${id} <span class="${etxClass(e)}">(${etxText(e)})</span>`).join(", ") || "—"}</td></tr>`).join("");
@@ -439,7 +487,7 @@ function renderNodes() {
 function renderLinks() {
   $("nb-count").textContent = st.links.length ? `${st.links.filter(l => l.up).length} up` : "";
   if (!st.links.length) {
-    $("links").innerHTML = `<tr><td class="empty">${transport ? "No neighbors heard." : "—"}</td></tr>`;
+    $("links").innerHTML = `<tr><td class="empty">${transport ? st.down ? "Node is down." : "No neighbors heard." : "—"}</td></tr>`;
     return;
   }
   $("links").innerHTML = `<tr><th>Node</th><th>State</th><th>ETX</th><th>We hear</th><th>Hears us</th><th>RSSI</th><th>SNR</th><th>Heard</th></tr>` +
@@ -454,7 +502,7 @@ function renderLinks() {
 function renderRoutes() {
   $("rt-count").textContent = st.routes.length ? `${st.routes.filter(r => !r.retracted).length} reachable` : "";
   if (!st.routes.length) {
-    $("routes").innerHTML = `<tr><td class="empty">${transport ? "No routes yet." : "—"}</td></tr>`;
+    $("routes").innerHTML = `<tr><td class="empty">${transport ? st.down ? "Node is down." : "No routes yet." : "—"}</td></tr>`;
     return;
   }
   $("routes").innerHTML = `<tr><th>Destination</th><th>Next hop</th><th>Metric (ETX)</th><th>Seq</th><th></th></tr>` +
@@ -496,6 +544,12 @@ function renderMap() {
   const info = new Map(st.nodes.map(n => [n.node, n]));
   const ids = new Set(info.keys());
   if (self !== null) ids.add(self);
+  const sim = !!(transport && st.sim && st.sim.alive);
+  if (sim) {
+    simNodeIds().forEach(id => ids.add(id));  // every simulated node is drawn, so any can be plugged into
+    ids.add(st.sim.attached);
+  }
+  const attached = sim ? st.sim.attached : self;
   const edges = new Map();
   const addEdge = (a, b, etx, stale) => {
     if (a === b) return;
@@ -525,45 +579,62 @@ function renderMap() {
   for (const id of list) {
     const [x, y] = pos.get(id);
     const n = info.get(id);
-    const stale = n ? n.stale : id !== self;
-    const fill = id === self ? "#e3ecfa" : "#fff";
-    const stroke = id === self ? "var(--accent)" : stale ? "var(--stale)" : n && n.flags & 21 ? "var(--poor)" : "var(--good)";
-    out += `<circle cx="${x}" cy="${y}" r="17" fill="${fill}" stroke="${stroke}" stroke-width="2.5"/>`;
-    out += `<text x="${x}" y="${y}" style="${id === self ? "font-weight:700" : stale ? "fill:var(--stale)" : ""}">${id}</text>`;
-    if (n && n.station) out += `<text class="lbl" x="${x}" y="${y + 27}">${esc(n.station)}</text>`;
+    const me = id === attached, dead = simDead(id);
+    const stale = n ? n.stale : !me;
+    const fill = dead ? "#fdeaea" : me ? "#e3ecfa" : "#fff";
+    const stroke = dead ? "var(--poor)" : me ? "var(--accent)" : stale ? "var(--stale)" : n && n.flags & 21 ? "var(--poor)" : "var(--good)";
+    const textStyle = [me ? "font-weight:700" : "", dead ? "fill:var(--poor);text-decoration:line-through" : stale && !me ? "fill:var(--stale)" : ""].join(";");
+    const label = dead ? "killed" : n && n.station ? n.station : "";
+    const click = sim && !me;
+    out += click ? `<g class="hit" data-attach="${id}"><title>Plug into node ${id}${dead ? " (killed)" : ""}</title>` : "<g>";
+    if (me && sim) out += `<circle cx="${x}" cy="${y}" r="22" fill="none" stroke="var(--accent)" stroke-width="1.5"/>`;
+    out += `<circle cx="${x}" cy="${y}" r="17" fill="${fill}" stroke="${stroke}" stroke-width="2.5" ${dead ? 'stroke-dasharray="4 3"' : ""}/>`;
+    out += `<text x="${x}" y="${y}" style="${textStyle}">${id}</text>`;
+    if (label) out += `<text class="lbl" x="${x}" y="${y + 27}" ${dead ? 'style="fill:var(--poor)"' : ""}>${esc(label)}</text>`;
+    out += "</g>";
   }
   if (!list.length) out = `<text x="${cx}" y="${cy}" class="lbl">${transport ? "Waiting for the first status broadcasts" : "Not connected"}</text>`;
   svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
   svg.innerHTML = out;
+  $("map-hint").textContent = sim ? "Click a node to plug into it. " : "";
 }
 window.addEventListener("resize", renderMap);
+$("map").addEventListener("click", ev => {
+  const g = ev.target.closest("[data-attach]");
+  if (g) attachTo(Number(g.dataset.attach));
+});
 
 /* Simulator controls */
 function renderSim() {
   $("simbar").style.display = st.sim ? "block" : "none";
   if (!st.sim || !st.sim.alive) return;
   const alive = new Set(st.sim.alive);
-  const all = new Set(st.sim.alive);
-  st.sim.links.forEach(([a, b]) => { all.add(a); all.add(b); });
-  const ids = [...all].filter(x => Number.isInteger(x) && x > 0 && x < 255).sort((a, b) => a - b);
+  const ids = simNodeIds();
   $("sim-nodes").innerHTML = ids.map(id => {
     const live = alive.has(id), att = id === st.sim.attached;
     return `<div class="sn ${live ? "" : "dead"} ${att ? "att" : ""}"><b>${id}</b>
-      ${att ? '<span class="muted">attached</span>' : `<button data-sim="@attach ${id}">plug in</button>`}
+      ${att ? '<span class="muted">attached</span>' : `<button data-attach="${id}">plug in</button>`}
       <button data-sim="${live ? "@kill" : "@revive"} ${id}">${live ? "kill" : "revive"}</button></div>`;
   }).join("");
   $("sim-links").textContent = "links: " + st.sim.links.map(([a, b, loss]) => `${a}-${b}${loss ? ` (${loss} %)` : ""}`).join("  ");
 }
+async function attachTo(id) {
+  if (!transport || !st.sim || id === st.sim.attached) return;
+  const res = await command(`@attach ${id}`, false).catch(e => ({ ok: false, reason: e.message }));
+  if (res.ok) {
+    st = Object.assign(fresh(), { sim: { ...st.sim, attached: id } });
+    $("log").innerHTML = "";
+    log(`plugged into node ${id}`, "ev");
+    renderAll();
+  }
+  refresh();
+}
 $("simbar").addEventListener("click", async ev => {
+  const at = ev.target.closest("button[data-attach]");
+  if (at) { attachTo(Number(at.dataset.attach)); return; }
   const b = ev.target.closest("button[data-sim]");
   if (!b) return;
-  const line = b.dataset.sim;
-  const res = await command(line, false).catch(e => ({ ok: false, reason: e.message }));
-  if (res.ok && line.startsWith("@attach")) {
-    st = Object.assign(fresh(), { sim: st.sim });
-    $("log").innerHTML = "";
-    log(`plugged into node ${line.split(" ")[1]}`, "ev");
-  }
+  await command(b.dataset.sim, false).catch(() => {});
   refresh();
 });
 async function simLink(verb) {
@@ -629,6 +700,7 @@ function setConnected(kind) {
 async function connected(t) {
   transport = t;
   st = fresh();
+  simIds = new Set();
   if (t.kind === "sim") st.sim = { alive: null, links: [] };
   $("log").innerHTML = "";
   $("banner").style.display = "none";
