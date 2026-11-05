@@ -84,6 +84,15 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     lr1121_add_test(test_lr1121_hf TEST_HF=1 LR1121_HF=1)
     lr1121_add_test(test_lr1121_cw TEST_CW_MS=100 LR1121_TEST_CW_MS=100)
 
+    # The RYLR498 driver against a fake module behind the serial interface, renamed the same way.
+    set_source_files_properties(src/radio/rylr498/rylr498.c PROPERTIES COMPILE_DEFINITIONS
+                                "lmesh_radio_rx=driver_radio_rx;lmesh_radio_tx_done=driver_radio_tx_done")
+    add_executable(test_rylr498 tests/unit/test_rylr498.c src/radio/rylr498/rylr498.c)
+    target_link_libraries(test_rylr498 PRIVATE lmesh)
+    target_include_directories(test_rylr498 BEFORE PRIVATE tests/unit/rylr498_fake include)
+    lmesh_warnings(test_rylr498)
+    add_test(NAME test_rylr498 COMMAND test_rylr498)
+
     add_test(NAME sim_smoke COMMAND lmesh_sim smoke 1)
     foreach(scenario S1 S2 S3 S4 S5 S6 S13 S7 S8 S9 S10 S11 S12 S14)
         add_test(NAME sim_${scenario} COMMAND lmesh_sim ${scenario} 1)
