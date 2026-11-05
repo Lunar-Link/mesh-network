@@ -1,4 +1,4 @@
-/* Platform port: SysTick clock, hardware random numbers, the selected radio driver, battery sense, flash storage. */
+/* Platform port: SysTick clock, seeded random numbers, the selected radio driver, battery sense, flash storage. */
 #include "port.h"
 
 #include <string.h>
@@ -14,7 +14,7 @@ _Static_assert(sizeof STATION_ID - 1 <= LMESH_STATION_ID_MAX, "STATION_ID is too
 /* Weak so a driver without channel sensing links with this left null, and the library never defers for it. */
 bool radio_channel_busy(void) __attribute__((weak));
 
-static uint32_t fallback;
+static uint32_t rand_state;
 
 static uint32_t port_now_ms(void *ctx)
 {
@@ -22,21 +22,15 @@ static uint32_t port_now_ms(void *ctx)
     return HAL_GetTick();
 }
 
-/* The RNG can report a seed error; a xorshift seeded from the device id covers that case, since only jitter needs it. */
+/* The library needs random numbers only for jitter and its first flood sequence number, so a xorshift seeded once per
+   start (board_entropy: the L476's RNG, or ADC noise on the F446, which has none) is enough on both chips. */
 static uint32_t port_random(void *ctx)
 {
     (void)ctx;
-    uint32_t v;
-    if (HAL_RNG_GenerateRandomNumber(&board_rng, &v) == HAL_OK) {
-        return v;
-    }
-    if (fallback == 0) {
-        fallback = HAL_GetUIDw0() ^ HAL_GetUIDw1() ^ HAL_GetUIDw2() ^ HAL_GetTick() ^ 0x9e3779b9u;
-    }
-    fallback ^= fallback << 13;
-    fallback ^= fallback >> 17;
-    fallback ^= fallback << 5;
-    return fallback;
+    rand_state ^= rand_state << 13;
+    rand_state ^= rand_state >> 17;
+    rand_state ^= rand_state << 5;
+    return rand_state;
 }
 
 static int port_radio_send(void *ctx, const uint8_t *frame, size_t len)
@@ -78,6 +72,10 @@ static int port_storage_write(void *ctx, uint8_t slot, const void *buf, size_t l
 void port_init(lmesh_port *port)
 {
     memset(port, 0, sizeof *port);
+    rand_state = board_entropy();
+    if (rand_state == 0) {
+        rand_state = 0x9e3779b9u;
+    }
     port->now_ms = port_now_ms;
     port->random = port_random;
     port->radio_send = port_radio_send;

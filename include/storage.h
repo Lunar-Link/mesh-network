@@ -1,4 +1,4 @@
-/* Non-volatile slots for the library (SPEC.md Section 12) in a wear-leveled log at the top of flash bank 2. */
+/* Non-volatile slots for the library (SPEC.md Section 12) in a wear-leveled log at the top of flash. */
 #ifndef STORAGE_H
 #define STORAGE_H
 
@@ -11,7 +11,5 @@ void storage_init(void);
 int storage_read(uint8_t slot, void *buf, size_t len);
 /* 0 once the value is in flash; an unchanged value is not written again. */
 int storage_write(uint8_t slot, const void *buf, size_t len);
-/* Called from the NMI handler on a flash double ECC error, which a write cut off by power loss can leave. */
-void storage_ecc_error(void);
 
 #endif

@@ -1,14 +1,15 @@
-/* Pin map and peripheral handles for the Nucleo-L476RG node board. */
+/* Pin map and peripheral handles for the node board: a Nucleo-F446RE or a Nucleo-L476RG. Both are Nucleo-64 boards
+   with the same headers, and every pin below has the same alternate function on both chips, so the wiring is the
+   same. What differs (clock, I2C, ADC channel numbers, random numbers, flash) is in src/mcu/<chip>/. */
 #ifndef BOARD_H
 #define BOARD_H
 
 #include <stdbool.h>
 
-#include "stm32l4xx_hal.h"
+#include "mcu.h"
 
 /* Radio on SPI1 with the pins most LoRa shields use on the Arduino header */
 #define RADIO_SPI SPI1
-#define RADIO_SPI_PRESCALER SPI_BAUDRATEPRESCALER_16 /* 5 MHz at 80 MHz */
 #define RADIO_SCK_PORT GPIOA
 #define RADIO_SCK_PIN GPIO_PIN_5 /* D13, shared with the LD2 LED, which is therefore unused */
 #define RADIO_MISO_PORT GPIOA
@@ -36,7 +37,6 @@
 
 /* Second SPI on the Morpho headers for storage or a second radio */
 #define AUX_SPI SPI2
-#define AUX_SPI_PRESCALER SPI_BAUDRATEPRESCALER_16
 #define AUX_SCK_PORT GPIOB
 #define AUX_SCK_PIN GPIO_PIN_13 /* CN10 pin 30 */
 #define AUX_MISO_PORT GPIOC
@@ -48,7 +48,6 @@
 
 /* Sensor bus on I2C1 at the Arduino D14/D15 pins, 100 kHz */
 #define SENSOR_I2C I2C1
-#define SENSOR_I2C_TIMING 0x10909CECu
 #define SENSOR_SCL_PORT GPIOB
 #define SENSOR_SCL_PIN GPIO_PIN_8 /* D15 */
 #define SENSOR_SDA_PORT GPIOB
@@ -63,10 +62,9 @@
 #define HOST_RX_PORT GPIOA
 #define HOST_RX_PIN GPIO_PIN_3
 
-/* Battery sense on ADC1 channel 1 through a resistor divider */
+/* Battery sense on ADC1 through a resistor divider; the channel number is per chip, in mcu.h */
 #define BATTERY_PORT GPIOC
 #define BATTERY_PIN GPIO_PIN_0 /* A5 */
-#define BATTERY_ADC_CHANNEL ADC_CHANNEL_1
 #define BATTERY_DIVIDER_NUM 2u /* battery volts = pin volts * NUM / DEN */
 #define BATTERY_DIVIDER_DEN 1u
 #define ADC_VREF_MV 3300u
@@ -81,10 +79,21 @@ extern I2C_HandleTypeDef board_sensor_i2c;
 extern UART_HandleTypeDef board_host_uart;
 extern UART_HandleTypeDef board_radio_uart;
 extern ADC_HandleTypeDef board_adc;
-extern RNG_HandleTypeDef board_rng;
 
 void board_init(void);
 uint16_t board_battery_mv(void);
 void board_radio_reset(bool asserted);
+/* Halts with interrupts off; for setup that cannot go on. */
+void board_fail(void);
+
+/* Provided by src/mcu/<chip>/mcu.c */
+void mcu_clock_init(void);
+void mcu_i2c_init(void);
+void mcu_adc_init(void);
+/* One 12-bit conversion of an ADC1 channel; false if the ADC did not finish. */
+bool mcu_adc_read(uint32_t channel, uint32_t *raw);
+/* A seed for the port's random numbers, different on each start: the L476's hardware RNG, or on the F446, which has
+   no RNG, the device id mixed with ADC noise. */
+uint32_t board_entropy(void);
 
 #endif

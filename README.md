@@ -13,9 +13,10 @@ Node software for the Resilient Lunar Surface Communications Network capstone: a
 
 ```
 mesh-network/
-  platformio.ini      board build: Nucleo-L476RG (STM32L476RG), STM32Cube HAL, one environment per radio driver
+  platformio.ini      board build: Nucleo-F446RE or Nucleo-L476RG, STM32Cube HAL, one environment per radio and chip
   src/                board application and platform port (table below)
     radio/<driver>/     one folder per radio driver; the build environment picks one
+    mcu/<chip>/         f446 or l476: clock, I2C, ADC, random seed and flash per chip; the environment picks one
   include/            firmware headers: pin map, port, radio interface, node identity
   lib/lmesh/          the protocol library, found by PlatformIO automatically
     library.json        manifest and the library's compiler flags
@@ -62,15 +63,18 @@ The folder is a PlatformIO project: `src/` is the firmware and `lib/lmesh/` is t
 | File | Contents |
 |---|---|
 | `src/main.c` | Start-up and the main loop: console, radio, `lmesh_tick()` when due or after input, sleep between interrupts. |
-| `src/board.c`, `include/board.h` | 80 MHz clock, pin map, radio SPI and UART, I2C, USB serial, battery ADC, hardware RNG, radio reset line. |
-| `src/port.c` | The `lmesh_port` functions: SysTick clock, hardware random numbers, the radio driver, battery voltage; the node identity. |
+| `src/board.c`, `include/board.h` | Pin map (the same on both boards), radio SPI and UART, USB serial, battery sense, radio reset line. |
+| `src/mcu/f446/`, `src/mcu/l476/` | What differs per chip: clock (84 MHz HSI or 80 MHz MSI), I2C, ADC, the random seed (ADC noise, or the L476's RNG), the storage flash backend, and `mcu.h` with SPI prescalers, the battery ADC channel and the storage geometry. |
+| `src/port.c` | The `lmesh_port` functions: SysTick clock, random numbers from a per-start seed, the radio driver, battery voltage; the node identity. |
 | `src/console.c` | Line protocol on the ST-LINK virtual COM port: command lines in, replies and events out, never blocking. |
-| `src/storage.c` | The library's storage slots in a wear-leveled log over the top 128 KB of flash, safe against power loss mid-write. |
+| `src/storage.c` | The library's storage slots in a wear-leveled log at the top of flash (F446: sectors 5 to 7, 384 KB; L476: 64 pages of bank 2, 128 KB), safe against power loss mid-write. |
 | `src/serial.c` | Interrupt-driven UART receive and transmit rings shared by the console and UART radios. |
-| `src/stm32l4xx_it.c` | Interrupt handlers, including the NMI a flash ECC error raises. |
+| `src/interrupts.c` | Interrupt handlers shared by both chips. |
 | `include/radio.h` | The interface every radio driver implements: init, send, airtime estimate, poll, and optional channel sensing. |
+| `tools/flash.py` | Reads which chip the attached ST-LINK sees, builds the matching environment and flashes it, with the node id and callsign. |
 | `include/node_config.h` | Node id, network id, network key and callsign, set per board with `-D` flags. |
 | `src/radio/rylr999/` | REYAX RYLR999 (868/915 MHz LoRa, AT commands over UART4): configures the module, sends frames as base64url text, parses `+RCV`, estimates airtime with Semtech's formula. |
+| `src/radio/rylr498/` | REYAX RYLR498 (433 MHz LoRa, AT commands over UART4): the RYLR999 driver's scheme at the RF study's band and settings, with a fallback for firmware that cannot store the band. |
 | `src/radio/lr1121/` | Waveshare Core1121-LF (Semtech LR1121 over SPI1): own SPI command layer with BUSY handling, bring-up with TCXO, RF switch and calibration, LoRa with raw binary frames, CAD channel sensing, power down. |
 | `src/radio/none/` | No radio: frames go nowhere and complete after the simulator's airtime model. For testing the console on one board. |
 
@@ -119,26 +123,31 @@ The browser interface for a node is in `../interface`; `python ../interface/serv
 
 CTest runs the unit tests, seed 1 of every scenario, and 20-seed sweeps of S3, S6, S9 and S11. The build defaults to Release; a sweep of 200 seeds takes seconds.
 
-The board firmware builds with PlatformIO (the VS Code extension, or `pio` from its core). Each radio driver has an environment; `rylr999` is the default, `lr1121` is the 433 MHz design radio, and `none` runs without a radio:
+The board firmware builds with PlatformIO (the VS Code extension, or `pio` from its core) for either a Nucleo-F446RE or a Nucleo-L476RG. Both are Nucleo-64 boards and take the same wiring. Environments are named `<radio>_<chip>`, with chip `f446` or `l476`. The radios are `rylr999` (`rylr999_f446` is the default), `lr1121` (the 433 MHz design radio), `rylr498` (a 433 MHz AT-command module) and `none` (no radio).
+
+The easiest way to flash is `tools/flash.py`. It asks the attached ST-LINK which chip it sees, builds the matching environment and programs it. Give each board its own node id, and the callsign before transmitting:
 
 ```
-pio run
-pio run -e lr1121
-pio run -e none
-pio run -t upload
-pio device monitor
+python tools/flash.py --list                       # attached ST-LINKs and the chip behind each
+python tools/flash.py --node-id 1                  # rylr999 on the only attached board
+python tools/flash.py lr1121 --node-id 2 --station-id N0CALL
+python tools/flash.py --node-id 3 --serial 0670FF565357657287163507   # one of several attached boards
+pio device monitor -p COM8
 ```
 
-Give each board its own node id at build time, and the callsign before transmitting (PowerShell shown):
+Or use PlatformIO directly when you know the chip. Its upload picks the first ST-LINK it finds, so attach one board at a time (PowerShell shown):
 
 ```
+pio run -e lr1121_l476
 $env:PLATFORMIO_BUILD_FLAGS='-DNODE_ID=2 -DSTATION_ID=\"N0CALL\"'
-pio run -t upload --upload-port COM5
+pio run -e rylr999_l476 -t upload
 ```
 
 Message ids, the route sequence number and the duplicate windows survive resets and re-flashing; a full chip erase clears them. On connect the node prints a `boot` event and, with the RYLR999, a `radio` event with `"state":"ready"` once the module is configured; then the commands of SPEC.md Section 11 work from any serial terminal.
 
 **RYLR999 wiring.** Module RXD_LoRa to A0 (PA0), TXD_LoRa to A1 (PA1), RST to D9 (PC7), GND to GND. The module needs 5 V at up to 950 mA at +30 dBm, more than the Nucleo's USB supply gives, so power it from a separate 5 V supply with grounds joined. The driver defaults to +10 dBm for the bench. The driver queries the module's settings at start and writes only those that differ, because the module keeps them in flash. RF settings are `-D` flags in `rylr999.c` and must match on every node. It never sets the module's `AT+CPIN` password, which would encrypt the link (not allowed under Part 97).
+
+**RYLR498 wiring and settings.** Module RXD to A0 (PA0), TXD to A1 (PA1), NRST to D9 (PC7), VDD to 3V3, GND to GND; check the pin numbers against the module's datasheet. The module runs on 3.3 V and draws 140 mA at +22 dBm, which the Nucleo's 3V3 pin can supply. It talks at 115200 baud, the module's default. The AT commands, base64url framing, query-before-write bring-up and airtime estimate are the RYLR999 driver's. The defaults are the RF study's: 433 MHz, SF9, 125 kHz, CR 4/5, preamble 12, +22 dBm. Every RF setting is a `-D` flag at the top of `rylr498.c`, checked against REYAX's limits (390 to 525 MHz, 0 to 22 dBm, SF9 at most at 125 kHz), and must match on every node. A 120-byte frame takes about 913 ms at SF9 because of the base64 expansion. Lower the power with `-DRYLR498_POWER_DBM=10` for boards a few meters apart. Firmware before 1.2.0 rejects the `,M` that stores the band in flash; the driver then sets the band without it after each reset, and the `ready` event shows `"band_stored":false`. 420 to 450 MHz is the 70 cm amateur band in the US, so set `STATION_ID` to the callsign.
 
 **Core1121-LF wiring.** The module is 3.3 V only, on supply and logic, and the driver needs every signal below. Pin numbers are the schematic's; check them against the signal names printed on the module.
 
@@ -171,7 +180,7 @@ Do these in order, on one board first. Nothing here has run on real hardware yet
 
 **Step 1: SPI and version readback, no RF needed**
 
-1. `pio run -e lr1121 -t upload`, then `pio device monitor`.
+1. `python tools/flash.py lr1121 --node-id 1`, then `pio device monitor`.
 2. Pass: `{"ev":"radio","driver":"lr1121","state":"ready","version":"xx.03.xx.xx",...}` within a second of the `boot` event. The second byte `03` means LR1121 in transceiver mode; note the firmware version in the last two bytes.
 3. If it fails, read the `reply` field:
 
@@ -186,7 +195,7 @@ Do these in order, on one board first. Nothing here has run on real hardware yet
 **Step 2: transmit power**
 
 1. Connect the sub-GHz connector through at least 30 dB of attenuation to a power meter or spectrum analyzer rated for +22 dBm. This step keys a carrier, so use a dummy load path, not an antenna.
-2. Build with a 30 s carrier after bring-up: `$env:PLATFORMIO_BUILD_FLAGS='-DLR1121_TEST_CW_MS=30000 -DSTATION_ID=\"YOURCALL\"'`, then `pio run -e lr1121 -t upload`.
+2. Build with a 30 s carrier after bring-up: `$env:PLATFORMIO_BUILD_FLAGS='-DLR1121_TEST_CW_MS=30000 -DSTATION_ID=\"YOURCALL\"'`, then `python tools/flash.py lr1121`.
 3. Record output power, frequency error at 433.000 MHz, and supply current. Expect about +22 dBm less the switch and filter losses; the datasheet gives +19 dBm minimum and +22 typical for the HP PA, ±2 dB step accuracy, about 100 mA at 434/490 MHz, and Waveshare states 115 mA at +22 dBm.
 4. Semtech's PA settings are for its own 868 to 928 MHz match. If power is low or harmonics are high, try `LR1121_PA_DUTY` 2 to 4 with `LR1121_PA_HP_SEL` 7, and record what gave the best result. Check the second and third harmonics against Part 97 limits.
 5. Rebuild without `LR1121_TEST_CW_MS` when done, or the node keys up at every reset.

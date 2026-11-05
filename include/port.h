@@ -1,4 +1,4 @@
-/* The platform port of SPEC.md Section 12 for the Nucleo-L476RG, and the node identity. */
+/* The platform port of SPEC.md Section 12 for the Nucleo-F446RE and Nucleo-L476RG, and the node identity. */
 #ifndef PORT_H
 #define PORT_H
 

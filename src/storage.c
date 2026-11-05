@@ -1,22 +1,14 @@
-/* Flash log for the storage slots: a ring of pages, each opened with a copy of every slot, records appended after. */
+/* Flash log for the storage slots: a ring of pages, each opened with a copy of every slot, records appended after.
+   The flash itself is behind storage_flash.h: 64 pages of 2 KB on the L476, 3 sectors of 128 KB on the F446. */
 #include "storage.h"
 
 #include <stdbool.h>
 #include <string.h>
 
-#include "board.h"
+#include "storage_flash.h"
 
-/* Top 128 KB of bank 2; platformio.ini caps the program size below it. */
-#ifndef STORAGE_ADDR
-#define STORAGE_ADDR 0x080E0000u
-#endif
-#ifndef STORAGE_MEM
-#define STORAGE_MEM ((const uint8_t *)STORAGE_ADDR)
-#endif
-#define BANK2_ADDR 0x08080000u
-#define BANK2_END 0x08100000u
-#define PAGES 64u
-#define PAGE 2048u
+#define PAGES STORAGE_PAGES
+#define PAGE STORAGE_PAGE
 #define SLOTS 3u
 #define SLOT_MAX 640u
 #define PAGE_MAGIC 0x484d4c53u
@@ -25,8 +17,6 @@
 
 #define PAD8(n) (((n) + 7u) & ~7u)
 
-_Static_assert(STORAGE_ADDR >= BANK2_ADDR && (STORAGE_ADDR - BANK2_ADDR) % PAGE == 0 && STORAGE_ADDR + PAGES * PAGE <= BANK2_END,
-               "the log must be whole pages inside bank 2");
 _Static_assert(8u + SLOTS * (8u + SLOT_MAX) <= PAGE, "a fresh page must hold a copy of every slot");
 _Static_assert(PAGES >= 3u, "an interrupted page start must never erase the last complete page");
 
@@ -40,7 +30,6 @@ static cached cache[SLOTS];
 static int cur_page;
 static uint32_t cur_seq;
 static uint32_t cur_off;
-static volatile bool ecc_error;
 
 static uint16_t crc16(const uint8_t *p, size_t n, uint16_t crc)
 {
@@ -63,44 +52,7 @@ static uint16_t get16(const uint8_t *p)
     return (uint16_t)(p[0] | p[1] << 8);
 }
 
-/* Copies from flash; false if the read hit an ECC error. */
-static bool flash_read(uint32_t off, void *out, size_t n)
-{
-    ecc_error = false;
-    memcpy(out, STORAGE_MEM + off, n);
-    return !ecc_error;
-}
-
-static bool flash_erase(unsigned page)
-{
-    FLASH_EraseInitTypeDef e = {0};
-    uint32_t bad = 0;
-    e.TypeErase = FLASH_TYPEERASE_PAGES;
-    e.Banks = FLASH_BANK_2;
-    e.Page = (STORAGE_ADDR - BANK2_ADDR) / PAGE + page;
-    e.NbPages = 1;
-    HAL_FLASH_Unlock();
-    __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_ALL_ERRORS);
-    bool ok = HAL_FLASHEx_Erase(&e, &bad) == HAL_OK;
-    HAL_FLASH_Lock();
-    return ok;
-}
-
-static bool flash_program(uint32_t off, const uint8_t *data, size_t n)
-{
-    bool ok = true;
-    HAL_FLASH_Unlock();
-    __HAL_FLASH_CLEAR_FLAG(FLASH_FLAG_ALL_ERRORS);
-    for (size_t i = 0; ok && i < n; i += 8u) {
-        uint64_t v;
-        memcpy(&v, data + i, 8);
-        ok = HAL_FLASH_Program(FLASH_TYPEPROGRAM_DOUBLEWORD, STORAGE_ADDR + off + (uint32_t)i, v) == HAL_OK;
-    }
-    HAL_FLASH_Lock();
-    return ok;
-}
-
-/* Record: mark, slot, length, data CRC, header CRC; then the data padded to a doubleword. */
+/* Record: mark, slot, length, data CRC, header CRC; then the data padded to 8 bytes, the flash programming unit. */
 static bool append(uint8_t slot)
 {
     const cached *c = &cache[slot];
@@ -118,7 +70,7 @@ static bool append(uint8_t slot)
     rec[6] = (uint8_t)hcrc;
     rec[7] = (uint8_t)(hcrc >> 8);
     memcpy(rec + 8, c->data, c->len);
-    if (!flash_program((uint32_t)cur_page * PAGE + cur_off, rec, n)) {
+    if (!storage_flash_program((uint32_t)cur_page * PAGE + cur_off, rec, n)) {
         cur_off = PAGE;
         return false;
     }
@@ -134,14 +86,14 @@ static bool start_page(void)
     cur_page = (int)next;
     cur_off = PAGE;
     cur_seq++;
-    if (!flash_erase(next)) {
+    if (!storage_flash_erase(next)) {
         return false;
     }
     for (int i = 0; i < 4; i++) {
         head[i] = (uint8_t)(PAGE_MAGIC >> (8 * i));
         head[4 + i] = (uint8_t)(cur_seq >> (8 * i));
     }
-    if (!flash_program((uint32_t)next * PAGE, head, sizeof head)) {
+    if (!storage_flash_program((uint32_t)next * PAGE, head, sizeof head)) {
         return false;
     }
     cur_off = 8;
@@ -162,7 +114,7 @@ static uint32_t replay(unsigned page, unsigned *seen)
     uint32_t off = 8;
     while (off + 8u <= PAGE) {
         uint8_t h[8];
-        if (!flash_read(base + off, h, sizeof h)) {
+        if (!storage_flash_read(base + off, h, sizeof h)) {
             return PAGE;
         }
         if (memcmp(h, erased, sizeof h) == 0) {
@@ -173,7 +125,7 @@ static uint32_t replay(unsigned page, unsigned *seen)
             get16(h + 6) != crc16(h, 6, CRC_INIT) || off + 8u + PAD8(len) > PAGE) {
             return PAGE;
         }
-        if (!flash_read(base + off + 8u, data, len) || crc16(data, len, CRC_INIT) != get16(h + 4)) {
+        if (!storage_flash_read(base + off + 8u, data, len) || crc16(data, len, CRC_INIT) != get16(h + 4)) {
             return PAGE;
         }
         cached *c = &cache[h[1]];
@@ -197,7 +149,7 @@ void storage_init(void)
 
     for (unsigned p = 0; p < PAGES; p++) {
         uint8_t head[8];
-        valid[p] = flash_read((uint32_t)p * PAGE, head, sizeof head) && get32(head) == PAGE_MAGIC;
+        valid[p] = storage_flash_read((uint32_t)p * PAGE, head, sizeof head) && get32(head) == PAGE_MAGIC;
         seq[p] = valid[p] ? get32(head + 4) : 0;
     }
     /* Oldest page first, so later records override earlier ones */
@@ -253,9 +205,4 @@ int storage_write(uint8_t slot, const void *buf, size_t len)
         return append(slot) ? 0 : -1;
     }
     return start_page() ? 0 : -1;
-}
-
-void storage_ecc_error(void)
-{
-    ecc_error = true;
 }
