@@ -81,6 +81,20 @@ form.send .go { align-self: end; }
 #simbar button { padding: 1px 6px; font-size: 12px; }
 #simbar .cut { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; color: var(--muted); font-size: 12px; }
 #simbar .cut input { width: 60px; }
+#simbar .sn .why { font-size: 11px; color: var(--poor); }
+.simctl { display: grid; grid-template-columns: 130px 1fr; gap: 8px 12px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); align-items: center; }
+.simctl > .k { color: var(--muted); font-size: 12px; }
+.simctl > .v { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 13px; }
+.simctl .v label { display: flex; gap: 4px; align-items: center; color: var(--muted); font-size: 12px; }
+.simctl input[type=number] { width: 70px; }
+.simctl input[type=range] { width: 160px; padding: 0; }
+.simctl .val { min-width: 48px; font-variant-numeric: tabular-nums; font-weight: 600; }
+.simctl .clock { font-family: var(--mono); font-size: 13px; }
+.simctl .paused { color: var(--fair); font-weight: 600; }
+#sim-sched-list { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+#sim-sched-list .se { display: flex; gap: 8px; align-items: center; font-size: 12px; }
+#sim-err { color: var(--poor); font-size: 12px; }
+@media (max-width: 700px) { .simctl { grid-template-columns: 1fr; } }
 </style>
 </head>
 <body>
@@ -107,6 +121,54 @@ form.send .go { align-self: end; }
       <button id="btn-cut">Cut</button>
       <button id="btn-join">Join</button>
       <span id="sim-links"></span>
+    </div>
+    <div class="simctl">
+      <div class="k">Clock</div>
+      <div class="v">
+        <button id="sim-run">Pause</button>
+        <label>Speed <input id="sim-speed" type="range" min="0" max="9" step="1"></label><span class="val" id="sim-speed-v"></span>
+        <label>Step <select id="sim-step-size">
+          <option value="0.5">0.5 s</option><option value="1">1 s</option><option value="5" selected>5 s</option><option value="10">10 s</option>
+          <option value="30">30 s</option><option value="60">1 min</option><option value="300">5 min</option><option value="900">15 min</option>
+        </select></label>
+        <button id="sim-step" title="Advance simulated time by the step size (→ key)">Step ▸</button>
+        <span class="clock" id="sim-clock"></span>
+      </div>
+
+      <div class="k">Link loss</div>
+      <div class="v">
+        <input id="sim-loss" type="range" min="0" max="90" step="1"><span class="val" id="sim-loss-v"></span>
+        <span class="muted" style="font-size:12px">applied to every link now up, and to links you join</span>
+      </div>
+
+      <div class="k">Random outages</div>
+      <div class="v">
+        <label>Nodes down <input id="sim-cn" type="range" min="0" max="50" step="1"></label><span class="val" id="sim-cn-v"></span>
+        <label>Links down <input id="sim-cl" type="range" min="0" max="50" step="1"></label><span class="val" id="sim-cl-v"></span>
+        <label>Mean outage <input id="sim-cm" type="number" min="1" max="86400" step="1"> s</label>
+        <label><input id="sim-cs" type="checkbox"> spare the plugged-in node</label>
+        <button id="sim-heal" title="End every random outage now">Heal all</button>
+      </div>
+
+      <div class="k">Scheduled downtime</div>
+      <div class="v">
+        <label>Node <select id="sim-sn"></select></label>
+        <label>Starts in <input id="sim-ss" type="number" min="0" value="10"> s</label>
+        <label>Down for <input id="sim-sd" type="number" min="1" value="60"> s</label>
+        <label>Repeat every <input id="sim-se" type="number" min="0" value="0"> s</label>
+        <button id="sim-sadd">Add</button>
+        <span class="muted" style="font-size:12px">repeat 0 = once; e.g. down 300 s every 900 s for a duty-cycled node</span>
+        <div id="sim-sched-list"></div>
+      </div>
+
+      <div class="k">Restart network</div>
+      <div class="v">
+        <label>Topology <select id="sim-rt"><option>random</option><option>line</option><option>ring</option><option>diamond</option></select></label>
+        <label>Nodes <input id="sim-rn" type="number" min="2" max="16"></label>
+        <label>Seed <input id="sim-rs" type="number" min="0"></label>
+        <button id="sim-restart" title="Start a fresh simulated network; all node state is lost">Restart</button>
+        <span id="sim-err"></span>
+      </div>
     </div>
   </section>
 
@@ -177,7 +239,9 @@ const STATE_CLASS = { queued: "", transmitted: "b-fair", delivered: "b-good", ex
 const BW_KHZ = { 7: "125 kHz", 8: "250 kHz", 9: "500 kHz" };
 
 let transport = null;
-let speed = 1;
+let speed = 1;      // simulated ms per real ms right now (0 while paused)
+let simStatus = null;  // the bridge's clock and control settings
+const SPEEDS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50, 100];
 let st;
 
 function fresh() {
@@ -612,12 +676,122 @@ function renderSim() {
   const ids = simNodeIds();
   $("sim-nodes").innerHTML = ids.map(id => {
     const live = alive.has(id), att = id === st.sim.attached;
+    const why = simStatus && simStatus.down[id];
     return `<div class="sn ${live ? "" : "dead"} ${att ? "att" : ""}"><b>${id}</b>
+      ${why ? `<span class="why">${why.map(r => r.startsWith("schedule") ? "scheduled" : r).join(", ")}</span>` : ""}
       ${att ? '<span class="muted">attached</span>' : `<button data-attach="${id}">plug in</button>`}
       <button data-sim="${live ? "@kill" : "@revive"} ${id}">${live ? "kill" : "revive"}</button></div>`;
   }).join("");
-  $("sim-links").textContent = "links: " + st.sim.links.map(([a, b, loss]) => `${a}-${b}${loss ? ` (${loss} %)` : ""}`).join("  ");
+  const cut = simStatus ? simStatus.links_down.map(([a, b]) => `${a}-${b} (outage)`) : [];
+  $("sim-links").textContent = "links: " + st.sim.links.map(([a, b, loss]) => `${a}-${b}${loss ? ` (${loss} %)` : ""}`).concat(cut).join("  ");
+  const sel = $("sim-sn"), keep = sel.value;
+  const opts = ids.map(id => `<option value="${id}">${id}</option>`).join("");
+  if (sel.dataset.opts !== opts) { sel.innerHTML = opts; sel.dataset.opts = opts; if (keep) sel.value = keep; }
 }
+
+/* Clock, loss, outages, schedule: the bridge owns them; the page shows its status and posts changes. */
+async function simControl(req) {
+  $("sim-err").textContent = "";
+  try {
+    const r = await fetch("/sim/control", { method: "POST", body: JSON.stringify(req) });
+    const o = await r.json();
+    if (!o.ok) { $("sim-err").textContent = o.reason || "refused"; log(`simulator: ${o.reason || "refused"}`, "err"); return null; }
+    onSimStatus(o);
+    return o;
+  } catch (e) { log(`simulator: ${e.message}`, "err"); return null; }
+}
+
+function onSimStatus(s) {
+  const restarted = simStatus && s.generation !== simStatus.generation;
+  simStatus = s;
+  speed = s.paused ? 0 : s.speed;
+  st.clock = { t: s.sim_ms, at: performance.now() };  // a simulated node's clock is the simulator's clock
+  if (restarted && transport && transport.kind === "sim") {
+    st = fresh();
+    st.sim = { alive: null, links: [] };
+    simIds = new Set();
+    $("log").innerHTML = "";
+    log(`simulator restarted: ${s.args.topo} of ${s.args.nodes}, seed ${s.args.seed}`, "ev");
+    renderAll();
+    refresh();
+  }
+  renderSimCtl();
+}
+
+const nearestSpeed = x => SPEEDS.reduce((bi, v, i) => Math.abs(Math.log(v / x)) < Math.abs(Math.log(SPEEDS[bi] / x)) ? i : bi, 0);
+const idle = el => document.activeElement !== el;  // leave a control alone while the user is on it
+function clockFmt(ms) {
+  const s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+  return `${h}:${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}.${Math.floor(ms % 1000 / 100)}`;
+}
+const secs = ms => duration(ms / 1000);
+
+function renderSimCtl() {
+  const s = simStatus;
+  if (!s) return;
+  $("sim-run").textContent = s.paused ? "▶ Run" : "❚❚ Pause";
+  if (idle($("sim-speed"))) $("sim-speed").value = nearestSpeed(s.speed);
+  $("sim-speed-v").textContent = `×${s.speed}`;
+  $("sim-clock").innerHTML = `sim time ${clockFmt(s.sim_ms)}${s.paused ? ' <span class="paused">paused</span>' : ""}`;
+  if (idle($("sim-loss"))) $("sim-loss").value = s.loss;
+  $("sim-loss-v").textContent = `${s.loss} %`;
+  if (idle($("sim-cn"))) $("sim-cn").value = s.chaos.node_pct;
+  if (idle($("sim-cl"))) $("sim-cl").value = s.chaos.link_pct;
+  $("sim-cn-v").textContent = `${s.chaos.node_pct} %`;
+  $("sim-cl-v").textContent = `${s.chaos.link_pct} %`;
+  if (idle($("sim-cm"))) $("sim-cm").value = s.chaos.mean_s;
+  $("sim-cs").checked = s.chaos.spare_attached;
+  if (idle($("sim-rt"))) $("sim-rt").value = s.args.topo;
+  if (idle($("sim-rn")) && !$("sim-rn").value) $("sim-rn").value = s.args.nodes;
+  if (idle($("sim-rs")) && $("sim-rs").value === "") $("sim-rs").value = s.args.seed;
+  $("sim-sched-list").innerHTML = s.schedule.map(e => {
+    const when = e.next_ms === null ? "done" : `${e.down ? "back up" : "goes down"} in ${secs(e.next_ms - s.sim_ms)}`;
+    return `<div class="se"><b>node ${e.node}</b> down ${secs(e.dur_ms)} ${e.every_ms ? `every ${secs(e.every_ms)}` : "once"}
+      ${e.down ? '<span class="badge b-poor">down now</span>' : ""}<span class="muted">${when}</span>
+      <button data-unsched="${e.id}">remove</button></div>`;
+  }).join("");
+}
+
+let lastSpeedSent = null;
+$("sim-run").onclick = () => simStatus && simControl({ op: "pause", value: !simStatus.paused });
+$("sim-speed").oninput = () => {
+  const v = SPEEDS[$("sim-speed").value];
+  $("sim-speed-v").textContent = `×${v}`;
+  if (v !== lastSpeedSent) { lastSpeedSent = v; simControl({ op: "speed", value: v }); }
+};
+async function simStep() {
+  if (!simStatus) return;
+  if (!simStatus.paused) await simControl({ op: "pause", value: true });
+  await simControl({ op: "step", seconds: Number($("sim-step-size").value) });
+  setTimeout(refresh, 250);
+}
+$("sim-step").onclick = simStep;
+document.addEventListener("keydown", ev => {
+  if (ev.key !== "ArrowRight" || !simStatus || !transport || transport.kind !== "sim") return;
+  if (ev.target.closest("input, select, textarea")) return;
+  ev.preventDefault();
+  simStep();
+});
+$("sim-loss").oninput = () => { $("sim-loss-v").textContent = `${$("sim-loss").value} %`; };
+$("sim-loss").onchange = async () => { await simControl({ op: "loss", value: Number($("sim-loss").value) }); refresh(); };
+for (const [id, key] of [["sim-cn", "node_pct"], ["sim-cl", "link_pct"]]) {
+  $(id).oninput = () => { $(id + "-v").textContent = `${$(id).value} %`; };
+  $(id).onchange = () => simControl({ op: "chaos", [key]: Number($(id).value) });
+}
+$("sim-cm").onchange = () => simControl({ op: "chaos", mean_s: Number($("sim-cm").value) || 60 });
+$("sim-cs").onchange = () => simControl({ op: "chaos", spare_attached: $("sim-cs").checked });
+$("sim-heal").onclick = async () => { await simControl({ op: "chaos", heal: true }); refresh(); };
+$("sim-sadd").onclick = async () => {
+  await simControl({ op: "sched_add", node: Number($("sim-sn").value), start_in_s: Number($("sim-ss").value) || 0,
+    dur_s: Number($("sim-sd").value) || 60, every_s: Number($("sim-se").value) || 0 });
+  refresh();
+};
+$("sim-sched-list").addEventListener("pointerdown", async ev => {  // pointerdown: the list is redrawn as its countdowns tick
+  const b = ev.target.closest("button[data-unsched]");
+  if (b) { await simControl({ op: "sched_remove", id: Number(b.dataset.unsched) }); refresh(); }
+});
+$("sim-restart").onclick = () => simControl({ op: "restart", topo: $("sim-rt").value,
+  nodes: Number($("sim-rn").value) || 8, seed: Number($("sim-rs").value) || 0 });
 async function attachTo(id) {
   if (!transport || !st.sim || id === st.sim.attached) return;
   const res = await command(`@attach ${id}`, false).catch(e => ({ ok: false, reason: e.message }));
@@ -640,7 +814,8 @@ $("simbar").addEventListener("click", async ev => {
 async function simLink(verb) {
   const a = $("cut-a").value, b = $("cut-b").value;
   if (!a || !b) return;
-  await command(`${verb} ${a} ${b}`, false).catch(() => {});
+  const loss = verb === "@join" && simStatus ? ` ${simStatus.loss}` : "";
+  await command(`${verb} ${a} ${b}${loss}`, false).catch(() => {});
   refresh();
 }
 $("btn-cut").onclick = () => simLink("@cut");
@@ -782,6 +957,7 @@ function connectSim() {
     close: async () => { src.close(); disconnected("disconnected"); },
   };
   src.onmessage = e => onLine(e.data);
+  src.addEventListener("sim", e => onSimStatus(JSON.parse(e.data)));
   src.onerror = () => { if (src.readyState === EventSource.CLOSED) disconnected("simulator bridge closed"); };
   src.onopen = () => { if (transport !== t) connected(t); };
 }
@@ -796,7 +972,8 @@ $("btn-close").onclick = () => transport && transport.close();
     if (r.ok) {
       const info = await r.json();
       simAvailable = true;
-      speed = info.speed || 1;
+      speed = info.paused ? 0 : info.speed || 1;
+      simStatus = info;
     }
   } catch {}
   setConnected(null);
