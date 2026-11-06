@@ -48,6 +48,12 @@ tr.stale td { color: var(--stale); }
 .b-good { border-color: var(--good); color: var(--good); }
 .b-fair { border-color: var(--fair); color: var(--fair); }
 .b-poor { border-color: var(--poor); color: var(--poor); }
+.phi { display: flex; align-items: center; gap: 6px; }
+.phi .bar { width: 54px; height: 6px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.phi .bar i { display: block; height: 100%; }
+.phi .bar i.good { background: var(--good); } .phi .bar i.fair { background: var(--fair); } .phi .bar i.poor { background: var(--poor); }
+section h2 .tools { margin-left: auto; display: flex; gap: 8px; align-items: baseline; font-weight: normal; font-size: 12px; }
+section h2 .tools button { padding: 1px 8px; font-size: 12px; }
 #map { width: 100%; height: 300px; display: block; }
 #map text { fill: var(--text); font-size: 12px; text-anchor: middle; dominant-baseline: central; }
 #map .lbl { fill: var(--muted); font-size: 10px; }
@@ -190,8 +196,11 @@ form.send .go { align-self: end; }
   </section>
 
   <section class="c6">
-    <h2>Neighbors <span class="count" id="nb-count"></span></h2>
+    <h2>Neighbors <span class="count" id="nb-count"></span>
+      <span class="tools"><span class="muted" id="ping-note"></span>
+        <button id="btn-ping" title="Broadcast a HELLO beacon now; every neighbor that hears it answers with its own HELLO" disabled>Ping neighbors</button></span></h2>
     <div class="scroll"><table id="links"></table></div>
+    <div class="note muted" style="font-size:12px;margin-top:6px">φ is how suspicious this node is that a neighbor has gone silent, from the gaps between its HELLO beacons: 1 means a 10 % chance it is alive and just late, 2 means 1 %, and so on. The neighbor is declared down when φ reaches <span id="phi-down">8</span>. Lossy links learn wider gaps, so they are given longer before being dropped.</div>
   </section>
 
   <section class="c6">
@@ -222,7 +231,7 @@ form.send .go { align-self: end; }
     <h2>Console</h2>
     <div id="log"></div>
     <div class="console-bar">
-      <input type="text" id="cmd" placeholder="id, nodes, links, routes, msgs, stats, status, send 2 n 600 hello ..." autocomplete="off">
+      <input type="text" id="cmd" placeholder="id, nodes, links, routes, msgs, stats, status, ping, send 2 n 600 hello ..." autocomplete="off">
       <label><input type="checkbox" id="show-poll"> show polling</label>
       <button id="btn-clear">Clear</button>
     </div>
@@ -247,7 +256,7 @@ let st;
 function fresh() {
   return {
     ident: null, radio: null, links: [], routes: [], nodes: [], msgs: [], stats: null,
-    sent: new Map(), inbox: [], storeDepth: null, clock: null, sim: null, down: false,
+    sent: new Map(), inbox: [], storeDepth: null, clock: null, sim: null, down: false, ping: null,
   };
 }
 st = fresh();
@@ -307,6 +316,43 @@ function duration(s) {
 }
 const volts = mv => mv ? (mv / 1000).toFixed(2) + " V" : "—";
 const pct = q => Math.round(q / 255 * 100) + " %";
+
+/* Phi accrual, as the node computes it (SPEC 7.3): phi = log10(1 + e^z), z = y (1.5976 + 0.070566 y^2),
+   y = (t - mean - pause) / sd, t = time since the neighbor's last HELLO. Computed here between polls so it climbs live. */
+const PHI_MAX = 136.6;
+function phiAt(t, mean, sd) {
+  const y = Math.max(-16, Math.min(16, (t - mean) / Math.max(sd, 1)));
+  const z = y * (1.5976 + 0.070566 * y * y);
+  const p = z > 0 ? z / Math.LN10 + Math.log10(1 + Math.exp(-z)) : Math.log10(1 + Math.exp(z));
+  return Math.min(PHI_MAX, p);
+}
+const phiDown = () => (st.ident && st.ident.phi_down) || 8;
+const phiPause = () => (st.ident && st.ident.phi_pause_ms) || 0;
+function livePhi(l) {
+  const now = nodeNow();
+  if (now === null || l.hello_at_ms === undefined || !l.hello_ms) return l.phi;
+  return phiAt(now - l.hello_at_ms, l.hello_ms + phiPause(), l.hello_sd_ms);
+}
+/* Silence after the last HELLO at which phi reaches the down threshold. */
+function silenceLimit(l) {
+  let lo = 0, hi = 16;
+  for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; if (phiAt(m, 0, 1) >= phiDown()) hi = m; else lo = m; }
+  return l.hello_ms + phiPause() + hi * l.hello_sd_ms;
+}
+function phiClass(p) {
+  return p < 1 ? "good" : p < phiDown() / 2 ? "fair" : "poor";
+}
+function phiCell(l) {
+  if (l.phi === undefined) return "—";
+  if (!l.up) return '<span class="muted">—</span>';
+  const p = livePhi(l);
+  const w = Math.min(100, p / phiDown() * 100);
+  const limit = l.hello_ms ? silenceLimit(l) : null;
+  const left = limit !== null && nodeNow() !== null ? Math.max(0, limit - (nodeNow() - l.hello_at_ms)) : null;
+  const tip = limit === null ? "" : `Declared down after ${(limit / 1000).toFixed(1)} s without a HELLO` + (left !== null ? `; ${(left / 1000).toFixed(0)} s left at this rate` : "");
+  return `<span class="phi" title="${tip}"><span class="bar"><i class="${phiClass(p)}" style="width:${w.toFixed(0)}%"></i></span><span class="${phiClass(p)}">${p.toFixed(2)}</span></span>`;
+}
+const helloText = l => l.hello_ms ? `${(l.hello_ms / 1000).toFixed(1)} s <span class="muted">± ${(l.hello_sd_ms / 1000).toFixed(1)}</span>` : "—";
 const clockText = () => new Date().toLocaleTimeString([], { hour12: false });
 
 /* Console log */
@@ -549,18 +595,56 @@ function renderNodes() {
 }
 
 function renderLinks() {
+  renderPing();
+  $("phi-down").textContent = phiDown();
   $("nb-count").textContent = st.links.length ? `${st.links.filter(l => l.up).length} up` : "";
   if (!st.links.length) {
     $("links").innerHTML = `<tr><td class="empty">${transport ? st.down ? "Node is down." : "No neighbors heard." : "—"}</td></tr>`;
     return;
   }
-  $("links").innerHTML = `<tr><th>Node</th><th>State</th><th>ETX</th><th>We hear</th><th>Hears us</th><th>RSSI</th><th>SNR</th><th>Heard</th></tr>` +
+  const ping = st.ping;
+  $("links").innerHTML = `<tr><th>Node</th><th>State</th><th>ETX</th><th title="Suspicion that the neighbor has gone silent; down at ${phiDown()}">φ</th><th title="Mean gap between its periodic HELLOs ± standard deviation, as learned by this node">HELLO every</th><th>We hear</th><th>Hears us</th><th>RSSI</th><th>SNR</th><th>Heard</th></tr>` +
     [...st.links].sort((a, b) => a.id - b.id).map(l => {
       const state = !l.up ? '<span class="badge b-poor">down</span>' : l.bidir ? '<span class="badge b-good">up</span>' : '<span class="badge b-fair">one-way</span>';
-      return `<tr class="${l.up ? "" : "stale"}"><td><b>${l.id}</b></td><td>${state}</td>
-        <td class="${etxClass(l.etx)}">${etxText(l.etx)}</td><td>${pct(l.rxq)}</td><td>${pct(l.txq)}</td>
+      const answered = ping && pingAnswered(l) ? ' <span class="badge b-good" title="A HELLO from this neighbor arrived after the ping">answered</span>' : "";
+      return `<tr class="${l.up ? "" : "stale"}"><td><b>${l.id}</b></td><td>${state}${answered}</td>
+        <td class="${etxClass(l.etx)}">${etxText(l.etx)}</td><td>${phiCell(l)}</td><td>${helloText(l)}</td><td>${pct(l.rxq)}</td><td>${pct(l.txq)}</td>
         <td>${l.rssi} dBm</td><td>${l.snr} dB</td><td>${ago(l.heard_ms)}</td></tr>`;
     }).join("");
+}
+
+/* Ping: one HELLO now; neighbors that hear it answer with a triggered HELLO within about 1 to 3 s of node time.
+   A neighbor counts as answered when its last-HELLO time moves after the ping. */
+const PING_WINDOW_MS = 15000;  // node time in which answers are still expected
+const PING_SHOW_MS = 30000;    // wall time the result stays on screen
+function pingAnswered(l) {
+  const p = st.ping;
+  return !!p && l.hello_at_ms !== undefined && l.hello_at_ms !== p.before.get(l.id) && l.hello_at_ms >= p.at - 1000;
+}
+function renderPing() {
+  const btn = $("btn-ping");
+  btn.disabled = !transport || st.down || !st.ident;
+  if (st.ping && performance.now() - st.ping.wall > PING_SHOW_MS) st.ping = null;  // wall time, so the result stays readable at any sim speed
+  const p = st.ping, now = nodeNow();
+  if (!p) { $("ping-note").textContent = ""; return; }
+  const up = st.links.filter(l => l.up);
+  const got = up.filter(pingAnswered).length;
+  const open = now !== null && now - p.at < PING_WINDOW_MS;
+  $("ping-note").textContent = `ping: ${got} of ${up.length} answered${open ? "…" : ""}`;
+}
+async function sendPing() {
+  const before = new Map(st.links.map(l => [l.id, l.hello_at_ms]));
+  const at = nodeNow();
+  let res;
+  try { res = await command("ping", false); } catch (e) { log(String(e.message || e), "err"); return; }
+  if (!res.ok) {
+    $("ping-note").textContent = res.reason === "too_soon" ? "ping: wait a moment" : `ping failed: ${res.reason}`;
+    return;
+  }
+  st.ping = { at: at ?? 0, before, wall: performance.now() };
+  renderLinks();
+  const k = speed > 0 ? speed : 1;  // replies come in node time; poll sooner than the 5 s cycle while they arrive
+  for (const ms of [1500, 3500, 6000]) setTimeout(refresh, ms / k);
 }
 
 function renderRoutes() {
@@ -861,6 +945,7 @@ $("cmd").addEventListener("keydown", async ev => {
   } catch (e) { log(String(e.message || e), "err"); }
 });
 $("btn-clear").onclick = () => { $("log").innerHTML = ""; };
+$("btn-ping").onclick = sendPing;
 
 /* Transports */
 function setConnected(kind) {
