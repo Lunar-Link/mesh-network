@@ -168,6 +168,10 @@ size_t lmesh_neighbors(const lmesh_node *node, lmesh_neighbor_info *out, size_t 
         out[n].rssi = nb->rssi;
         out[n].snr = nb->snr;
         out[n].last_heard_ms = nb->last_heard_ms;
+        out[n].phi100 = lmesh_neighbor_phi100(node, nb);
+        out[n].last_hello_ms = nb->last_hello_ms;
+        out[n].hello_interval_ms = nb->phi_sd_ms ? nb->phi_mean_ms : (uint32_t)LMESH_HELLO_PERIOD_MS;
+        out[n].hello_sd_ms = nb->phi_sd_ms ? nb->phi_sd_ms : (uint32_t)LMESH_PHI_MIN_SD_MS;
         n++;
     }
     return n;

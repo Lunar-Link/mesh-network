@@ -1,4 +1,5 @@
-/* Neighbor table: liveness from missed HELLOs and failed unicasts, restart detection, HELLO loss bitmap, bidirectional ETX. */
+/* Neighbor table: phi accrual liveness from HELLO arrival times, failed unicasts, restart detection, HELLO loss bitmap,
+ * bidirectional ETX. */
 #include <string.h>
 
 #include "hello.h"
@@ -19,6 +20,28 @@ _Static_assert(LMESH_ETX_WINDOW >= 2 && LMESH_ETX_WINDOW <= 16, "the HELLO recep
 #define ETX8_BAND_LOW 12u
 #define ETX8_BAND_MID 24u
 
+/* Phi accrual (Hayashibara et al., 2004). phi = -log10(P_later(t)), where P_later is the probability that the next
+ * periodic HELLO arrives later than t after the last one heard, under a normal fit to the recent intervals between
+ * periodic HELLOs. The normal tail uses the logistic approximation 1 / (1 + exp(z)), z = y (1.5976 + 0.070566 y^2),
+ * y = (t - mean) / sd, which gives phi = log10(1 + exp(z)). All arithmetic is integer: y and z in Q10, phi in
+ * hundredths. */
+#define PHI_Q 10
+#define PHI_ONE (1 << PHI_Q)
+#define PHI_Y_MAX (16 * PHI_ONE)
+#define PHI_A_Q10 1636
+#define PHI_B_Q16 4625
+#define PHI_LN10_Q10 2358
+#define PHI100_MAX 13660u
+
+_Static_assert(LMESH_PHI_WINDOW >= 2 && LMESH_PHI_WINDOW <= 255, "phi window counts fit in a byte");
+_Static_assert(LMESH_PHI_THRESHOLD > 30 && LMESH_PHI_THRESHOLD < PHI100_MAX,
+               "phi threshold, in hundredths, must lie above phi at the mean and below phi at 16 deviations");
+_Static_assert(LMESH_PHI_MIN_SD_MS > 0, "the deviation floor must be positive");
+
+/* 1000 log10(1 + exp(-k/4)), k = 0..32. */
+static const uint16_t phi_tail1000[33] = {301, 250, 206, 168, 136, 109, 87, 70, 55, 44, 34, 27, 21, 17, 13, 10, 8,
+                                          6,   5,   4,   3,   2,   2,   1,  1,  1,  1,  1,  0,  0,  0,  0,  0};
+
 static uint8_t popcount16(uint16_t v)
 {
     uint8_t c = 0;
@@ -35,6 +58,120 @@ static uint8_t etx_band(uint8_t etx8)
         return 0;
     }
     return etx8 <= ETX8_BAND_MID ? 1u : 2u;
+}
+
+static uint32_t phi_tail(uint32_t u_q10)
+{
+    uint32_t idx = u_q10 >> (PHI_Q - 2);
+    if (idx >= 32u) {
+        return 0;
+    }
+    uint32_t frac = u_q10 & ((1u << (PHI_Q - 2)) - 1u);
+    uint32_t span = 1u << (PHI_Q - 2);
+    return (phi_tail1000[idx] * (span - frac) + phi_tail1000[idx + 1u] * frac + span / 2u) / span;
+}
+
+static uint16_t phi100_of_y(int32_t y_q10)
+{
+    int64_t y = y_q10;
+    int64_t y2 = (y * y) / PHI_ONE;
+    int64_t c = PHI_A_Q10 + (y2 * PHI_B_Q16) / 65536;
+    int64_t z = (y * c) / PHI_ONE;
+    uint32_t p1000;
+    if (z >= 0) {
+        p1000 = (uint32_t)((z * 1000 + PHI_LN10_Q10 / 2) / PHI_LN10_Q10) + phi_tail((uint32_t)z);
+    } else {
+        p1000 = phi_tail((uint32_t)-z);
+    }
+    uint32_t p100 = (p1000 + 5u) / 10u;
+    return (uint16_t)(p100 > PHI100_MAX ? PHI100_MAX : p100);
+}
+
+static int32_t phi_threshold_y(void)
+{
+    int32_t lo = 0;
+    int32_t hi = PHI_Y_MAX;
+    while (lo < hi) {
+        int32_t mid = lo + (hi - lo) / 2;
+        if (phi100_of_y(mid) >= LMESH_PHI_THRESHOLD) {
+            hi = mid;
+        } else {
+            lo = mid + 1;
+        }
+    }
+    return lo;
+}
+
+static uint32_t isqrt64(uint64_t v)
+{
+    uint64_t root = 0;
+    uint64_t bit = 1ull << 62;
+    while (bit > v) {
+        bit >>= 2;
+    }
+    while (bit) {
+        if (v >= root + bit) {
+            v -= root + bit;
+            root = (root >> 1) + bit;
+        } else {
+            root >>= 1;
+        }
+        bit >>= 2;
+    }
+    return (uint32_t)root;
+}
+
+uint16_t lmesh_phi100(uint32_t elapsed_ms, uint32_t mean_ms, uint32_t sd_ms)
+{
+    if (sd_ms == 0) {
+        sd_ms = 1;
+    }
+    int64_t y = ((int64_t)elapsed_ms - (int64_t)mean_ms) * PHI_ONE / (int64_t)sd_ms;
+    if (y > PHI_Y_MAX) {
+        y = PHI_Y_MAX;
+    } else if (y < -PHI_Y_MAX) {
+        y = -PHI_Y_MAX;
+    }
+    return phi100_of_y((int32_t)y);
+}
+
+static uint32_t phi_limit(uint32_t mean_ms, uint32_t sd_ms)
+{
+    uint64_t margin = ((uint64_t)phi_threshold_y() * sd_ms + PHI_ONE - 1u) / PHI_ONE;
+    return mean_ms + (uint32_t)LMESH_PHI_PAUSE_MS + (uint32_t)margin;
+}
+
+static void phi_refresh(lmesh_neighbor *n)
+{
+    uint32_t mean = LMESH_HELLO_PERIOD_MS;
+    uint32_t sd = 0;
+    if (n->phi_count > 0) {
+        uint64_t sum = 0;
+        for (uint8_t i = 0; i < n->phi_count; i++) {
+            sum += n->phi_interval_ms[i];
+        }
+        mean = (uint32_t)((sum + n->phi_count / 2u) / n->phi_count);
+        uint64_t var = 0;
+        for (uint8_t i = 0; i < n->phi_count; i++) {
+            int64_t d = (int64_t)n->phi_interval_ms[i] - (int64_t)mean;
+            var += (uint64_t)(d * d);
+        }
+        sd = isqrt64(var / n->phi_count);
+    }
+    if (sd < LMESH_PHI_MIN_SD_MS) {
+        sd = LMESH_PHI_MIN_SD_MS;
+    }
+    n->phi_mean_ms = mean;
+    n->phi_sd_ms = sd;
+    n->phi_limit_ms = phi_limit(mean, sd);
+}
+
+static void phi_reset(lmesh_neighbor *n)
+{
+    n->periodic_valid = false;
+    n->phi_count = 0;
+    n->phi_next = 0;
+    phi_refresh(n);
 }
 
 static void emit_neighbor(lmesh_node *node, lmesh_event_type type, const lmesh_neighbor *n)
@@ -162,6 +299,7 @@ void lmesh_neighbor_hello_seen(lmesh_node *node, lmesh_neighbor *n, uint8_t hell
     if (!was_up) {
         n->up = true;
         n->fail_count = 0;
+        phi_reset(n);
         emit_neighbor(node, LMESH_EV_NEIGHBOR_UP, n);
         lmesh_message_route_event(node, n->id);
         lmesh_link_neighbor_reset(node, n->id);
@@ -194,6 +332,46 @@ bool lmesh_neighbor_restart_check(lmesh_node *node, lmesh_neighbor *n, uint8_t h
     return seqno_changed;
 }
 
+void lmesh_neighbor_hello_timing(lmesh_node *node, lmesh_neighbor *n, bool periodic)
+{
+    if (!n || !n->up || !periodic) {
+        return;
+    }
+    if (n->periodic_valid) {
+        n->phi_interval_ms[n->phi_next] = node->now_ms - n->last_periodic_ms;
+        n->phi_next = (uint8_t)((n->phi_next + 1u) % LMESH_PHI_WINDOW);
+        if (n->phi_count < LMESH_PHI_WINDOW) {
+            n->phi_count++;
+        }
+        phi_refresh(n);
+    }
+    n->last_periodic_ms = node->now_ms;
+    n->periodic_valid = true;
+}
+
+uint32_t lmesh_neighbor_silence_limit_ms(const lmesh_neighbor *n)
+{
+#if LMESH_PHI_ACCRUAL
+    if (n->phi_sd_ms == 0) {
+        return phi_limit(LMESH_HELLO_PERIOD_MS, LMESH_PHI_MIN_SD_MS);
+    }
+    return n->phi_limit_ms;
+#else
+    (void)n;
+    return DOWN_AFTER_MS;
+#endif
+}
+
+uint16_t lmesh_neighbor_phi100(const lmesh_node *node, const lmesh_neighbor *n)
+{
+    if (!n || !n->used) {
+        return 0;
+    }
+    uint32_t mean = n->phi_sd_ms ? n->phi_mean_ms : (uint32_t)LMESH_HELLO_PERIOD_MS;
+    uint32_t sd = n->phi_sd_ms ? n->phi_sd_ms : (uint32_t)LMESH_PHI_MIN_SD_MS;
+    return lmesh_phi100(node->now_ms - n->last_hello_ms, mean + (uint32_t)LMESH_PHI_PAUSE_MS, sd);
+}
+
 void lmesh_neighbor_link_result(lmesh_node *node, lmesh_node_id id, bool ok)
 {
     lmesh_neighbor *n = lmesh_neighbor_find(node, id);
@@ -222,7 +400,7 @@ void lmesh_neighbor_tick(lmesh_node *node)
         if (!n->used || !n->up) {
             continue;
         }
-        uint32_t deadline = n->last_hello_ms + DOWN_AFTER_MS;
+        uint32_t deadline = n->last_hello_ms + lmesh_neighbor_silence_limit_ms(n);
         if (lmesh_time_reached(node->now_ms, deadline)) {
             declare_down(node, n);
         } else {

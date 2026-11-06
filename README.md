@@ -32,7 +32,7 @@ The folder is a PlatformIO project: `src/` is the firmware and `lib/lmesh/` is t
 
 | File | Contents |
 |---|---|
-| `lmesh.h` | The API: init, tick, next wake time, radio receive and transmit-done entry points, send and cancel, queries for the interface, the line protocol. |
+| `lmesh.h` | The API: init, tick, next wake time, radio receive and transmit-done entry points, send and cancel, HELLO ping, queries for the interface, the line protocol. |
 | `lmesh_config.h` | Compile-time parameters with defaults, each overridable by a `-D` flag. |
 | `lmesh_types.h` | Node identifiers, error codes, priorities, message types and states, events, query rows, counters, identity. |
 | `lmesh_port.h` | The platform port: clock, random, radio send, channel busy, airtime estimate, battery, health, storage. The application callbacks: events and command execution. |
@@ -46,8 +46,8 @@ The folder is a PlatformIO project: `src/` is the firmware and `lib/lmesh/` is t
 | `aes.c` | link | AES-128 forward cipher used by the CMAC tag. |
 | `link.c` | link | Transmit queue with due times and priority bands, one frame in flight, hop acknowledgments with status codes, retries with airtime-scaled backoff, repeat detection, link failure counting. |
 | `flood.c` | link | Controlled flood for status and route requests: duplicate cache keyed by origin and sequence, hop limit, random rebroadcast delay. |
-| `neighbor.c` | routing | Neighbor table: liveness from missed HELLOs and failed unicasts, restart detection, HELLO loss bitmap, bidirectional ETX. |
-| `hello.c` | routing | HELLO encode and decode, periodic and triggered sends, pagination of the route list, replacement of a neighbor's route vector. |
+| `neighbor.c` | routing | Neighbor table: φ accrual liveness from HELLO arrival intervals, failed unicasts, restart detection, HELLO loss bitmap, bidirectional ETX. |
+| `hello.c` | routing | HELLO encode and decode, periodic, triggered and ping sends, pagination of the route list, replacement of a neighbor's route vector. |
 | `route.c` | routing | Route table: feasibility condition, selection with hysteresis, retraction, expiry, sequence-number requests. |
 | `store.c` | message | Fixed message store: checksummed records, lifetime countdown, eviction order, message-id counter. |
 | `message.c` | message | Submit, forward, deliver; custody transfer; receipts; origin re-send; message states and events; weighted round-robin scheduler. |

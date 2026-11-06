@@ -161,6 +161,8 @@ typedef enum sim_metric_id {
     M_EVICTED_ROUTINE,
     M_EVICTED_NORMAL,
     M_EVICTED_URGENT,
+    M_FALSE_DOWNS,
+    M_DETECT_MS,
     M_COUNT
 } sim_metric_id;
 
