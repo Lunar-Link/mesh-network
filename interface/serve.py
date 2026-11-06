@@ -14,7 +14,7 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_EXE = HERE.parent / "mesh-network" / "build" / ("lmesh_console.exe" if sys.platform == "win32" else "lmesh_console")
+DEFAULT_EXE = HERE.parent / "build" / ("lmesh_console.exe" if sys.platform == "win32" else "lmesh_console")
 TICK_S = 0.05
 TOPO_EVERY_S = 1.0
 STATUS_EVERY_S = 0.5
@@ -518,7 +518,7 @@ def main():
     sim = None
     if a.sim:
         if not a.exe.exists():
-            sys.exit(f"{a.exe} not found; build it with: cmake --build ../mesh-network/build")
+            sys.exit(f"{a.exe} not found; build it from the repository root with: cmake --build build")
         sim = Sim(a.exe, a.topo, a.nodes, a.seed, a.loss, a.speed)
 
     server = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(sim))

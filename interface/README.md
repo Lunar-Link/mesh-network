@@ -1,6 +1,6 @@
 # interface
 
-A browser page for a laptop plugged into a mesh node. It shows the node's status, neighbors, routes and the whole network from status broadcasts, and it sends and receives messages. It speaks only the line protocol of `mesh-network/SPEC.md` Section 11, so it works with any node and needs no internet connection.
+A browser page for a laptop plugged into a mesh node. It shows the node's status, neighbors, routes and the whole network from status broadcasts, and it sends and receives messages. It speaks only the line protocol of [SPEC.md](../SPEC.md) Section 11, so it works with any node and needs no internet connection.
 
 **Status (27 October 2026):** first version. Tested against the simulator (8 nodes, kill, reroute, plug into another node, text and telemetry delivered); the USB path has not yet run against a board.
 
@@ -23,7 +23,7 @@ Open http://localhost:8000, press **Connect USB**, pick the ST-LINK port (115200
 
 ## Use without a board
 
-Build the simulator console in `mesh-network` (`cmake --build build`), then:
+Build the simulator console from the repository root (`cmake --build build`), then from this folder:
 
 ```
 python serve.py --sim --speed 10
@@ -46,7 +46,7 @@ All of these run in `serve.py` in simulated time, using the console's `@t`, `@ki
 - **This node:** identity, radio settings from the driver's `radio` event, uptime, neighbor and route counts, store depth, delivery and error counters, frames by type.
 - **Network:** a map of every node heard, with links from this node's neighbor table and every status broadcast, colored by ETX; stale nodes are gray.
 - **Nodes:** the node table: battery, uptime, store, health flags, last heard, each node's neighbors.
-- **Neighbors** and **Routes:** this node's tables. Each neighbor shows φ, the node's suspicion that it has gone silent (φ accrual, `mesh-network/SPEC.md` Section 7.3): 1 means a 10 % chance it is alive and only late, 2 means 1 %, and the node declares it down at 8 (`phi_down` from `id`). The page recomputes φ every second from the neighbor's last HELLO time and its learned HELLO interval (**HELLO every**, mean ± deviation), so the bar climbs live between polls; hovering it shows the silence after which the neighbor is dropped. **Ping neighbors** sends the `ping` command: the node broadcasts a HELLO at once and every neighbor that hears it answers with its own, marked **answered** for 30 s. Pings are rate-limited by the node (`too_soon`).
+- **Neighbors** and **Routes:** this node's tables. Each neighbor shows φ, the node's suspicion that it has gone silent (φ accrual, [SPEC.md](../SPEC.md) Section 7.3): 1 means a 10 % chance it is alive and only late, 2 means 1 %, and the node declares it down at 8 (`phi_down` from `id`). The page recomputes φ every second from the neighbor's last HELLO time and its learned HELLO interval (**HELLO every**, mean ± deviation), so the bar climbs live between polls; hovering it shows the silence after which the neighbor is dropped. **Ping neighbors** sends the `ping` command: the node broadcasts a HELLO at once and every neighbor that hears it answers with its own, marked **answered** for 30 s. Pings are rate-limited by the node (`too_soon`).
 - **Send** and **Received:** text, command and telemetry messages with their delivery state; messages addressed to this node.
 - **Console:** every line the node sends, and a command box for the line protocol.
 
@@ -59,5 +59,5 @@ All of these run in `serve.py` in simulated time, using the console's `@t`, `@ki
 ## Known gaps
 
 - The node table does not include the node itself, so this node's own battery and health flags are not shown; it needs the library to report its own status, or a firmware `battery` line.
-- φ needs a node built from `mesh-network` with φ accrual (5 November 2026 or later); with older firmware the φ and HELLO columns show "—" and the ping button gets `unknown_command`.
+- φ needs firmware from this repository with φ accrual (5 November 2026 or later); with older firmware the φ and HELLO columns show "—" and the ping button gets `unknown_command`.
 - The map uses a circle layout, which gets busy past about 10 nodes.
