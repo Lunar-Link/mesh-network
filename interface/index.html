@@ -8,7 +8,7 @@
 <link rel="icon" href="data:,">
 <style>
 :root {
-  --bg: #f4f4f4; --panel: #ffffff; --panel-2: #f6f6f6; --line: #d9d9d9;
+  --bg: #cfd1e1; --panel: #ffffff; --panel-2: #f6f6f6; --line: #d9d9d9;
   --text: #1a1a1a; --muted: #6b6b6b; --accent: #1f5fbf;
   --good: #1e8a4c; --fair: #a86f00; --poor: #c62f2f; --stale: #9a9a9a;
   --mono: Consolas, "Cascadia Mono", monospace;
@@ -20,16 +20,22 @@ header h1 { font-size: 16px; margin: 0; }
 .ident { display: flex; gap: 16px; flex-wrap: wrap; color: var(--muted); }
 .ident b { color: var(--text); }
 .spacer { flex: 1; }
-button, select, input { font: inherit; color: var(--text); background: #fff; border: 1px solid #b5b5b5; border-radius: 3px; padding: 3px 8px; }
+button, select, input { font: inherit; color: var(--text); background: #fff; border: 1px solid #b5b5b5; border-radius: 5px; padding: 3px 8px; }
 button { cursor: pointer; background: #f0f0f0; }
 button:hover:not(:disabled) { background: #e6e6e6; }
 button:disabled { opacity: .5; cursor: default; }
 #conn { color: var(--muted); }
 #conn.on { color: var(--good); font-weight: 600; }
 main { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; padding: 12px 16px 24px; }
-section { background: var(--panel); border: 1px solid var(--line); padding: 10px 12px; min-width: 0; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
 section h2 { font-size: 14px; margin: 0 0 8px; display: flex; align-items: baseline; gap: 8px; }
 section h2 .count, section h2 .note { font-weight: normal; color: var(--muted); font-size: 13px; }
+summary { cursor: pointer; color: var(--muted); }
+details { margin-top: 10px; }
+details > summary { font-size: 13px; }
+.detail-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; margin-top: 10px; }
+.detail-grid section { grid-column: span 6; }
+.detail-grid section.wide { grid-column: span 12; }
 .c4 { grid-column: span 4; } .c5 { grid-column: span 5; } .c6 { grid-column: span 6; }
 .c7 { grid-column: span 7; } .c8 { grid-column: span 8; } .c12 { grid-column: span 12; }
 @media (max-width: 1000px) { main > section { grid-column: span 12; } }
@@ -43,7 +49,7 @@ th { color: var(--muted); font-weight: normal; font-size: 12px; }
 td.wrap { white-space: normal; word-break: break-word; }
 tr.stale td { color: var(--stale); }
 .empty { color: var(--muted); padding: 8px 2px; }
-.badge { display: inline-block; padding: 0 5px; font-size: 12px; border: 1px solid var(--line); border-radius: 3px; margin-right: 4px; }
+.badge { display: inline-block; padding: 0 5px; font-size: 12px; border: 1px solid var(--line); border-radius: 5px; margin-right: 4px; }
 .good { color: var(--good); } .fair { color: var(--fair); } .poor { color: var(--poor); } .muted { color: var(--muted); }
 .b-good { border-color: var(--good); color: var(--good); }
 .b-fair { border-color: var(--fair); color: var(--fair); }
@@ -54,22 +60,27 @@ tr.stale td { color: var(--stale); }
 .phi .bar i.good { background: var(--good); } .phi .bar i.fair { background: var(--fair); } .phi .bar i.poor { background: var(--poor); }
 section h2 .tools { margin-left: auto; display: flex; gap: 8px; align-items: baseline; font-weight: normal; font-size: 12px; }
 section h2 .tools button { padding: 1px 8px; font-size: 12px; }
+.term { border-bottom: 1px dotted #9a9a9a; cursor: help; }
+#tip { position: fixed; z-index: 50; display: none; max-width: 280px; padding: 6px 9px; background: #2b2d3a; color: #fff; font-size: 12px; line-height: 1.35; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.25); pointer-events: none; }
 #map { width: 100%; height: 300px; display: block; }
 #map text { fill: var(--text); font-size: 12px; text-anchor: middle; dominant-baseline: central; }
 #map .lbl { fill: var(--muted); font-size: 10px; }
 #map .hit { cursor: pointer; }
 #map .hit:hover circle { stroke-width: 4; fill: #eef3fb; }
-form.send { display: grid; grid-template-columns: 70px 120px 100px 90px 1fr auto; gap: 8px; margin-bottom: 10px; }
+form.send { display: grid; grid-template-columns: 90px 1fr auto; gap: 8px; margin-bottom: 10px; }
 form.send label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 2px; }
 form.send input, form.send select { width: 100%; }
 form.send .go { align-self: end; }
+form.send .send-options { grid-column: 1 / -1; }
+form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(100px, 1fr)); gap: 8px; margin-top: 8px; }
 @media (max-width: 700px) { form.send { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 700px) { form.send .option-grid { grid-template-columns: 1fr; } }
 .inbox { max-height: 320px; overflow-y: auto; }
 .inbox .m { border-bottom: 1px solid var(--line); padding: 6px 0; }
 .inbox .meta { color: var(--muted); font-size: 12px; }
 .inbox .body { word-break: break-word; }
 .inbox .hex { font-family: var(--mono); font-size: 12px; }
-#log { height: 240px; overflow-y: auto; font: 12px/1.4 var(--mono); background: var(--panel-2); border: 1px solid var(--line); padding: 6px 8px; }
+#log { height: 240px; overflow-y: auto; font: 12px/1.4 var(--mono); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
 #log div { white-space: pre-wrap; word-break: break-all; }
 #log .ev { color: var(--accent); }
 #log .tx { color: var(--text); font-weight: 600; }
@@ -78,17 +89,17 @@ form.send .go { align-self: end; }
 .console-bar { display: flex; gap: 8px; margin-top: 6px; align-items: center; }
 .console-bar input[type=text] { flex: 1; font-family: var(--mono); }
 .console-bar label { color: var(--muted); font-size: 12px; display: flex; gap: 4px; align-items: center; }
-#banner, #down { display: none; grid-column: span 12; background: #fff4f4; border: 1px solid var(--poor); color: var(--poor); padding: 8px 12px; }
+#banner, #down { display: none; grid-column: span 12; background: #fff4f4; border: 1px solid var(--poor); border-radius: 8px; color: var(--poor); padding: 8px 12px; }
 #simbar { display: none; grid-column: span 12; }
 #simbar .nodes { display: flex; flex-wrap: wrap; gap: 6px; }
-#simbar .sn { display: flex; align-items: center; gap: 4px; border: 1px solid var(--line); padding: 3px 4px 3px 8px; }
+#simbar .sn { display: flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 6px; padding: 3px 4px 3px 8px; }
 #simbar .sn.dead b { color: var(--poor); text-decoration: line-through; }
 #simbar .sn.att { border-color: var(--accent); }
 #simbar button { padding: 1px 6px; font-size: 12px; }
 #simbar .cut { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; color: var(--muted); font-size: 12px; }
 #simbar .cut input { width: 60px; }
 #simbar .sn .why { font-size: 11px; color: var(--poor); }
-.simctl { display: grid; grid-template-columns: 130px 1fr; gap: 8px 12px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line); align-items: center; }
+.simctl { display: grid; grid-template-columns: 130px 1fr; gap: 8px 12px; margin-top: 10px; align-items: center; }
 .simctl > .k { color: var(--muted); font-size: 12px; }
 .simctl > .v { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 13px; }
 .simctl .v label { display: flex; gap: 4px; align-items: center; color: var(--muted); font-size: 12px; }
@@ -119,7 +130,7 @@ form.send .go { align-self: end; }
   <div id="down"></div>
 
   <section id="simbar">
-    <h2>Simulator <span class="note">plug into any node (or click it on the map), or kill one to watch the mesh route around it</span></h2>
+    <h2>Simulator <span class="note">plug into a node, or kill one</span></h2>
     <div class="nodes" id="sim-nodes"></div>
     <div class="cut">Link
       <input id="cut-a" type="number" min="1" max="254" placeholder="a">
@@ -128,6 +139,8 @@ form.send .go { align-self: end; }
       <button id="btn-join">Join</button>
       <span id="sim-links"></span>
     </div>
+    <details>
+    <summary>Simulator controls</summary>
     <div class="simctl">
       <div class="k">Clock</div>
       <div class="v">
@@ -137,33 +150,31 @@ form.send .go { align-self: end; }
           <option value="0.5">0.5 s</option><option value="1">1 s</option><option value="5" selected>5 s</option><option value="10">10 s</option>
           <option value="30">30 s</option><option value="60">1 min</option><option value="300">5 min</option><option value="900">15 min</option>
         </select></label>
-        <button id="sim-step" title="Advance simulated time by the step size (→ key)">Step ▸</button>
+        <button id="sim-step" data-tip="Advance simulated time by the step size (→ key).">Step ▸</button>
         <span class="clock" id="sim-clock"></span>
       </div>
 
-      <div class="k">Link loss</div>
+      <div class="k"><span class="term" data-term="Link loss">Link loss</span></div>
       <div class="v">
         <input id="sim-loss" type="range" min="0" max="90" step="1"><span class="val" id="sim-loss-v"></span>
-        <span class="muted" style="font-size:12px">applied to every link now up, and to links you join</span>
       </div>
 
-      <div class="k">Random outages</div>
+      <div class="k"><span class="term" data-term="Random outages">Random outages</span></div>
       <div class="v">
         <label>Nodes down <input id="sim-cn" type="range" min="0" max="50" step="1"></label><span class="val" id="sim-cn-v"></span>
         <label>Links down <input id="sim-cl" type="range" min="0" max="50" step="1"></label><span class="val" id="sim-cl-v"></span>
         <label>Mean outage <input id="sim-cm" type="number" min="1" max="86400" step="1"> s</label>
         <label><input id="sim-cs" type="checkbox"> spare the plugged-in node</label>
-        <button id="sim-heal" title="End every random outage now">Heal all</button>
+        <button id="sim-heal" data-tip="End every random outage now.">Heal all</button>
       </div>
 
-      <div class="k">Scheduled downtime</div>
+      <div class="k"><span class="term" data-term="Scheduled downtime">Scheduled downtime</span></div>
       <div class="v">
         <label>Node <select id="sim-sn"></select></label>
         <label>Starts in <input id="sim-ss" type="number" min="0" value="10"> s</label>
         <label>Down for <input id="sim-sd" type="number" min="1" value="60"> s</label>
         <label>Repeat every <input id="sim-se" type="number" min="0" value="0"> s</label>
         <button id="sim-sadd">Add</button>
-        <span class="muted" style="font-size:12px">repeat 0 = once; e.g. down 300 s every 900 s for a duty-cycled node</span>
         <div id="sim-sched-list"></div>
       </div>
 
@@ -172,54 +183,51 @@ form.send .go { align-self: end; }
         <label>Topology <select id="sim-rt"><option>random</option><option>line</option><option>ring</option><option>diamond</option></select></label>
         <label>Nodes <input id="sim-rn" type="number" min="2" max="16"></label>
         <label>Seed <input id="sim-rs" type="number" min="0"></label>
-        <button id="sim-restart" title="Start a fresh simulated network; all node state is lost">Restart</button>
+        <button id="sim-restart" data-tip="Start a fresh simulated network. All node state is lost.">Restart</button>
         <span id="sim-err"></span>
       </div>
     </div>
+    </details>
   </section>
 
   <section class="c5">
-    <h2>This node <span id="self-state"></span></h2>
+    <h2>This node <span id="self-state"></span>
+      <span class="tools"><span class="muted" id="ping-note"></span>
+        <button id="btn-ping" data-term="Ping" disabled>Ping neighbors</button></span></h2>
     <div class="kv" id="self"></div>
-    <div class="scroll" style="margin-top:12px"><table id="frames"></table></div>
+    <details>
+      <summary>More node statistics</summary>
+      <div class="kv" id="self-more" style="margin-top:8px"></div>
+      <div class="scroll" style="margin-top:12px"><table id="frames"></table></div>
+    </details>
   </section>
 
   <section class="c7">
     <h2>Network <span class="count" id="net-count"></span></h2>
     <svg id="map" role="img" aria-label="Network map"></svg>
-    <div class="note muted" style="font-size:12px"><span id="map-hint"></span>Line color is link quality (ETX): green up to 1.5, amber up to 3, red above. Dashed: reported by a stale node.</div>
-  </section>
-
-  <section class="c12">
-    <h2>Nodes <span class="note">from status broadcasts</span></h2>
-    <div class="scroll"><table id="nodes"></table></div>
-  </section>
-
-  <section class="c6">
-    <h2>Neighbors <span class="count" id="nb-count"></span>
-      <span class="tools"><span class="muted" id="ping-note"></span>
-        <button id="btn-ping" title="Broadcast a HELLO beacon now; every neighbor that hears it answers with its own HELLO" disabled>Ping neighbors</button></span></h2>
-    <div class="scroll"><table id="links"></table></div>
-    <div class="note muted" style="font-size:12px;margin-top:6px">φ is how suspicious this node is that a neighbor has gone silent, from the gaps between its HELLO beacons: 1 means a 10 % chance it is alive and just late, 2 means 1 %, and so on. The neighbor is declared down when φ reaches <span id="phi-down">8</span>. Lossy links learn wider gaps, so they are given longer before being dropped.</div>
-  </section>
-
-  <section class="c6">
-    <h2>Routes <span class="count" id="rt-count"></span></h2>
-    <div class="scroll"><table id="routes"></table></div>
+    <div class="note muted" style="font-size:12px"><span id="map-hint"></span>Line color is <span class="term" data-term="ETX">ETX</span>: green ≤ 1.5, amber ≤ 3, red above. Dashed: stale report.</div>
   </section>
 
   <section class="c8">
     <h2>Send</h2>
     <form class="send" id="send">
       <label>To<input id="f-dest" type="number" min="1" max="254" list="known" required></label>
-      <label>Type<select id="f-type"><option value="text">Text</option><option value="cmd">Command</option><option value="tel">Telemetry (hex)</option></select></label>
-      <label>Priority<select id="f-prio"><option value="u">Urgent</option><option value="n" selected>Normal</option><option value="r">Routine</option></select></label>
-      <label>Lifetime s<input id="f-life" type="number" min="1" value="600" required></label>
       <label>Content<input id="f-text" type="text" maxlength="200" autocomplete="off" required></label>
       <button class="go" type="submit">Send</button>
+      <details class="send-options">
+        <summary>Message options</summary>
+        <div class="option-grid">
+          <label><span class="term" data-term="Type">Type</span><select id="f-type"><option value="text">Text</option><option value="cmd">Command</option><option value="tel">Telemetry (hex)</option></select></label>
+          <label><span class="term" data-term="Priority">Priority</span><select id="f-prio"><option value="u">Urgent</option><option value="n" selected>Normal</option><option value="r">Routine</option></select></label>
+          <label><span class="term" data-term="Lifetime">Lifetime (seconds)</span><input id="f-life" type="number" min="1" value="600" required></label>
+        </div>
+      </details>
     </form>
     <datalist id="known"></datalist>
-    <div class="scroll"><table id="sent"></table></div>
+    <details>
+      <summary>Sent message history</summary>
+      <div class="scroll"><table id="sent"></table></div>
+    </details>
   </section>
 
   <section class="c4">
@@ -227,15 +235,33 @@ form.send .go { align-self: end; }
     <div class="inbox" id="inbox"></div>
   </section>
 
-  <section class="c12">
-    <h2>Console</h2>
-    <div id="log"></div>
-    <div class="console-bar">
-      <input type="text" id="cmd" placeholder="id, nodes, links, routes, msgs, stats, status, ping, send 2 n 600 hello ..." autocomplete="off">
-      <label><input type="checkbox" id="show-poll"> show polling</label>
-      <button id="btn-clear">Clear</button>
+  <details class="wide c12">
+    <summary>Diagnostics and raw console</summary>
+    <div class="detail-grid">
+      <section class="wide">
+        <h2>Nodes</h2>
+        <div class="scroll"><table id="nodes"></table></div>
+      </section>
+      <section>
+        <h2>Neighbors <span class="count" id="nb-count"></span></h2>
+        <div class="scroll"><table id="links"></table></div>
+      </section>
+      <section>
+        <h2>Routes <span class="count" id="rt-count"></span></h2>
+        <div class="scroll"><table id="routes"></table></div>
+      </section>
+      <section class="wide">
+        <h2>Console</h2>
+        <div id="log"></div>
+        <div class="console-bar">
+          <input type="text" id="cmd" placeholder="id, nodes, links, routes, msgs, stats, status, ping, send 2 n 600 hello ..." autocomplete="off">
+          <label>View <select id="console-mode"><option value="meaning">Plain language</option><option value="raw">Raw output</option></select></label>
+          <label><input type="checkbox" id="show-poll"> show polling</label>
+          <button id="btn-clear">Clear</button>
+        </div>
+      </section>
     </div>
-  </section>
+  </details>
 </main>
 
 <script>
@@ -348,24 +374,190 @@ function phiCell(l) {
   const p = livePhi(l);
   const w = Math.min(100, p / phiDown() * 100);
   const limit = l.hello_ms ? silenceLimit(l) : null;
-  const left = limit !== null && nodeNow() !== null ? Math.max(0, limit - (nodeNow() - l.hello_at_ms)) : null;
-  const tip = limit === null ? "" : `Declared down after ${(limit / 1000).toFixed(1)} s without a HELLO` + (left !== null ? `; ${(left / 1000).toFixed(0)} s left at this rate` : "");
-  return `<span class="phi" title="${tip}"><span class="bar"><i class="${phiClass(p)}" style="width:${w.toFixed(0)}%"></i></span><span class="${phiClass(p)}">${p.toFixed(2)}</span></span>`;
+  const tipLine = limit === null ? GLOSSARY["φ"] : `Dropped after ${(limit / 1000).toFixed(0)} s without a HELLO.`;
+  return `<span class="phi" data-tip="${tipLine}"><span class="bar"><i class="${phiClass(p)}" style="width:${w.toFixed(0)}%"></i></span><span class="${phiClass(p)}">${p.toFixed(2)}</span></span>`;
 }
 const helloText = l => l.hello_ms ? `${(l.hello_ms / 1000).toFixed(1)} s <span class="muted">± ${(l.hello_sd_ms / 1000).toFixed(1)}</span>` : "—";
 const clockText = () => new Date().toLocaleTimeString([], { hour12: false });
 
+/* Plain-language meanings for terms on the page. Rest the pointer on a dotted-underlined term to see one. */
+const GLOSSARY = {
+  "ETX": "Expected transmissions: how many tries a message needs to cross this link, counting the acknowledgment. 1.0 is perfect; higher means a weaker link.",
+  "φ": "Suspicion that this neighbor has gone silent, from how regularly its HELLO beacons usually arrive. 1 means a 10 % chance it is alive and only late, 2 means 1 %. The node drops the neighbor at 8.",
+  "HELLO": "A short beacon every node broadcasts about every 10 s, so neighbors know it is there and how well they hear it.",
+  "HELLO every": "Average time between this neighbor's HELLO beacons, ± how much it varies. Lost beacons make it longer and more spread out.",
+  "Ping": "Broadcast a HELLO beacon now. Every neighbor that hears it answers with its own.",
+  "answered": "A HELLO from this neighbor arrived after the ping.",
+  "RSSI": "Received signal strength, in dBm. Closer to 0 is stronger; around −120 is very weak.",
+  "SNR": "Signal-to-noise ratio, in dB: how far the signal stands above background noise. Higher is better.",
+  "We hear": "Share of this neighbor's recent HELLO beacons that this node received.",
+  "Hears us": "Share of this node's recent HELLO beacons that the neighbor reports receiving.",
+  "one-way": "We hear this neighbor, but it has not reported hearing us, so it is not used for routing yet.",
+  "Next hop": "The neighbor a message is handed to first on its way to the destination.",
+  "Metric": "Total ETX along the path to the destination. Lower is better.",
+  "Seq": "Route sequence number set by the destination. A higher number means newer route information.",
+  "lost": "No route to this destination right now. Messages for it wait in the store.",
+  "stale": "No status heard from this node for a while, so its information may be out of date.",
+  "Station": "The amateur radio call sign the node identifies with.",
+  "Store": "Messages this node is holding, waiting to be forwarded or confirmed.",
+  "Lost": "Messages that node dropped (expired or pushed out of a full store) since its last status.",
+  "Health": "Warning flags the node reports about itself.",
+  "Uptime": "Time since the node last started.",
+  "Neighbors": "Nearby nodes heard in both directions.",
+  "Reachable": "Destinations this node currently has a route to.",
+  "Delivered": "Messages delivered to this node, plus this node's own messages confirmed by a receipt.",
+  "Airtime": "Total time this node's radio has spent transmitting.",
+  "Ack timeouts": "Times the next node did not confirm receiving a frame in time.",
+  "Link failures": "Times a frame could not reach a neighbor after every retry.",
+  "Dropped": "Messages removed before delivery: expired, pushed out of a full store, or past the hop limit.",
+  "Bad frames": "Received frames rejected for a bad security tag, another network's id, or damage.",
+  "DATA": "Frames carrying messages.",
+  "HOP_ACK": "Confirmation from the next node that it took a message.",
+  "STATUS": "A node's health report, flooded through the network about once a minute.",
+  "ROUTE_REQ": "A request for fresh route information after a route is lost.",
+  "Type": "Text is for people. Command asks the destination to run an action and report a result. Telemetry is machine data, entered as hex.",
+  "Priority": "Urgent messages go first; routine ones still get a fair share.",
+  "Lifetime": "How long the network keeps trying to deliver the message before giving up.",
+  "hops": "How many radio links the message crossed.",
+  "Network": "Network id. Nodes ignore frames from other networks.",
+  "Link loss": "Share of frames the simulator drops on every link that is up, and on links you join.",
+  "Random outages": "Share of time nodes and links spend down at random, and how long each outage lasts on average.",
+  "Scheduled downtime": "Take a node down after a delay, once or repeating. Repeat 0 means once; for example, down 300 s every 900 s for a node that sleeps to save power.",
+};
+GLOSSARY.Frames = "Radio frames this node has sent and received, by type. " + GLOSSARY.HELLO;
+/* A term with a tooltip if the glossary has it, plain text otherwise. */
+const T = (text, key = text) => GLOSSARY[key] ? `<span class="term" data-term="${esc(key)}">${text}</span>` : text;
+
+/* Tooltip: appears after the pointer rests on a term for a moment, follows tables that re-render underneath it. */
+const TIP_DELAY_MS = 700;
+const tip = document.createElement("div");
+tip.id = "tip";
+document.body.appendChild(tip);
+let tipFor = null, tipTimer = null, mouseX = 0, mouseY = 0;
+const tipText = el => el.dataset.tip || GLOSSARY[el.dataset.term] || "";
+function hideTip() {
+  clearTimeout(tipTimer);
+  tipTimer = null; tipFor = null;
+  tip.style.display = "none";
+}
+function showTip() {
+  let el = tipFor;
+  if (el && !el.isConnected) {  // the table re-rendered: use whatever term is now under the pointer
+    const now = document.elementFromPoint(mouseX, mouseY);
+    el = now && now.closest("[data-term],[data-tip]");
+  }
+  const text = el && tipText(el);
+  if (!text) { hideTip(); return; }
+  tip.textContent = text;
+  tip.style.display = "block";
+  const r = el.getBoundingClientRect();
+  const x = Math.min(Math.max(8, r.left), innerWidth - tip.offsetWidth - 8);
+  const below = r.bottom + 6 + tip.offsetHeight < innerHeight;
+  tip.style.left = `${x}px`;
+  tip.style.top = `${below ? r.bottom + 6 : r.top - tip.offsetHeight - 6}px`;
+}
+document.addEventListener("mousemove", e => { mouseX = e.clientX; mouseY = e.clientY; });
+document.addEventListener("mouseover", e => {
+  const el = e.target.closest("[data-term],[data-tip]");
+  if (el && tipFor && tipText(el) === tipText(tipFor)) { tipFor = el; return; }  // same term, re-rendered
+  hideTip();
+  if (!el) return;
+  tipFor = el;
+  tipTimer = setTimeout(showTip, TIP_DELAY_MS);
+});
+document.addEventListener("mousedown", hideTip);
+window.addEventListener("scroll", hideTip);  // the page, not the console's own auto-scroll
+document.addEventListener("wheel", hideTip, { passive: true });
+
 /* Console log */
-function log(text, cls) {
+function log(text, cls, meaning = text) {
   const box = $("log");
   const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 4;
   const div = document.createElement("div");
   if (cls) div.className = cls;
-  div.textContent = `${clockText()}  ${text}`;
+  div.dataset.time = clockText();
+  div.dataset.raw = text;
+  div.dataset.meaning = meaning;
+  div.textContent = `${div.dataset.time}  ${$("console-mode").value === "raw" ? text : meaning}`;
   box.appendChild(div);
   while (box.childElementCount > 600) box.firstChild.remove();
   if (atBottom) box.scrollTop = box.scrollHeight;
 }
+
+function explainCommand(line) {
+  const [verb, ...args] = line.trim().split(/\s+/);
+  const names = {
+    id: "Checking this node's identity",
+    nodes: "Checking status reports from the network",
+    links: "Checking nearby node links",
+    routes: "Checking paths to other nodes",
+    msgs: "Checking stored messages",
+    stats: "Checking node counters",
+    status: "Broadcasting this node's status",
+    ping: "Pinging neighbors with a HELLO beacon",
+  };
+  if (names[verb]) return `${names[verb]}…`;
+  if (["send", "cmd", "tel"].includes(verb)) {
+    const dest = args[0] || "?";
+    const action = verb === "send" ? "message" : verb === "cmd" ? "command" : "telemetry";
+    return `Sending a ${action} to node ${dest}…`;
+  }
+  return `Sending command: ${line}`;
+}
+
+function explainLine(raw) {
+  let o;
+  try { o = JSON.parse(raw); } catch { return raw; }
+
+  if (o.ev) {
+    switch (o.ev) {
+      case "boot": return "Node started.";
+      case "error": return `Node reported an error: ${o.what || "unknown error"}.`;
+      case "radio":
+        return o.state === "ready" ? `Radio is ready (${o.driver || "radio"}).` : `Radio ${o.state || "status changed"}${o.reply ? `: ${o.reply}` : ""}.`;
+      case "neighbor":
+        return `Neighbor ${o.id} is ${o.state === "up" ? "reachable" : "down"}${o.etx !== undefined ? ` (ETX ${o.etx})` : ""}.`;
+      case "link":
+        return `Link to node ${o.id}: ETX ${o.etx ?? "—"}, signal ${o.rssi ?? "—"} dBm, signal-to-noise ${o.snr ?? "—"} dB.`;
+      case "route":
+        return o.next ? `Path to node ${o.dest} now goes through node ${o.next} (cost ${o.metric ?? "unknown"}).` : `No route to node ${o.dest} is currently available.`;
+      case "msg": {
+        const state = ({ queued: "queued", transmitted: "sent to the next node", delivered: "delivered", expired: "expired before delivery", failed: "failed" })[o.state] || o.state || "updated";
+        const extra = o.reason && o.reason !== "none" ? ` (${String(o.reason).replaceAll("_", " ")})` : o.result && o.result !== "delivered" ? ` (${o.result})` : "";
+        return `Message ${o.id} to node ${o.dest}: ${state}${extra}.`;
+      }
+      case "rx":
+        return `Received a ${o.type || "data"} message from node ${o.origin} over ${o.hops} hop${o.hops === 1 ? "" : "s"}: ${o.text ?? o.hex ?? "[no content]"}`;
+      case "status": return `Received a status update from node ${o.node}.`;
+      case "store": return `Message store now has ${o.depth} item${o.depth === 1 ? "" : "s"}.`;
+      default: return raw;
+    }
+  }
+
+  if (o.ok === false && o.reason === "too_soon") return "Ping refused: the last one was too recent.";
+  if (o.ok === false) return `Command failed: ${String(o.reason || "unknown reason").replaceAll("_", " ")}.`;
+  if (o.id !== undefined && o.net !== undefined) return `This is node ${o.id} on network ${o.net}${o.station ? ` (${o.station})` : ""}.`;
+  if (o.dest !== undefined && o.next !== undefined) {
+    return o.retracted || !o.next ? `Node ${o.dest} is unreachable.` : `To reach node ${o.dest}, send through node ${o.next} (route cost ${o.metric ?? "unknown"}; sequence ${o.seq ?? "unknown"}).`;
+  }
+  if (o.batt_mv !== undefined && o.node !== undefined) return `Node ${o.node} status: battery ${volts(o.batt_mv)}, uptime ${duration(o.uptime_s)}, ${o.neighbors?.length ?? 0} neighbors.`;
+  if (o.etx !== undefined && o.id !== undefined && o.up !== undefined) {
+    return `Neighbor ${o.id} is ${o.up ? "reachable" : "down"}; ${o.bidir ? "the link works both ways" : "the link is not confirmed in both directions"} (ETX ${o.etx}${o.phi !== undefined ? `, φ ${o.phi}` : ""}).`;
+  }
+  if (o.delivered !== undefined && o.ack_timeouts !== undefined) return `Node counters: ${o.delivered} messages delivered, ${o.ack_timeouts} acknowledgment timeouts, ${o.link_failures} link failures.`;
+  if (o.role !== undefined && o.origin !== undefined && o.id !== undefined) return `Message ${o.id} from node ${o.origin}: ${o.state || o.role}${o.dest !== undefined ? `, addressed to node ${o.dest}` : ""}.`;
+  if (o.ok === true && o.origin !== undefined && o.id !== undefined) return `Message ${o.id} accepted by node ${o.origin}.`;
+  if (o.ok === true) return "Command completed.";
+  return raw;
+}
+
+$("console-mode").addEventListener("change", () => {
+  const mode = $("console-mode").value;
+  const box = $("log");
+  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 4;
+  for (const row of box.children) row.textContent = `${row.dataset.time}  ${row.dataset[mode] || row.dataset.raw}`;
+  if (atBottom) box.scrollTop = box.scrollHeight;
+});
 
 /* Command queue: one command on the wire at a time; dump rows collect until the end line. */
 const queue = [];
@@ -381,7 +573,7 @@ function pump() {
   pending = queue.shift();
   pending.rows = [];
   pending.timer = setTimeout(() => finish(new Error(`no reply to "${pending.line}"`)), 4000);
-  if (!pending.quiet || $("show-poll").checked) log("> " + pending.line, "tx");
+  if (!pending.quiet || $("show-poll").checked) log("> " + pending.line, "tx", explainCommand(pending.line));
   transport.send(pending.line).catch(e => finish(e));
 }
 function finish(err, result) {
@@ -401,12 +593,12 @@ function onLine(raw) {
   let o;
   try { o = JSON.parse(raw); } catch { log(raw); return; }
   if (o.ev) {
-    log(raw, o.ev === "error" || (o.ev === "radio" && o.state === "error") ? "err" : "ev");
+    log(raw, o.ev === "error" || (o.ev === "radio" && o.state === "error") ? "err" : "ev", explainLine(raw));
     onEvent(o);
     return;
   }
   const show = pending && (!pending.quiet || $("show-poll").checked);
-  if (show || !pending) log(raw, o.ok === false ? "err" : "row");
+  if (show || !pending) log(raw, o.ok === false ? "err" : "row", explainLine(raw));
   if (!pending) return;
   if ("end" in o) finish(null, { rows: pending.rows, truncated: !!o.truncated });
   else if ("ok" in o) finish(null, o);
@@ -495,7 +687,7 @@ async function refresh() {
       if (st.ident && r.origin === st.ident.id && r.role !== "relay") {
         const key = `${r.origin}:${r.id}`;
         const m = st.sent.get(key) || { origin: r.origin, id: r.id };
-        Object.assign(m, { dest: r.dest, type: r.type, prio: r.prio, state: r.state, attempts: r.attempts, lifetime: r.lifetime_s });
+        Object.assign(m, { dest: r.dest, type: r.type, prio: r.prio, state: r.state, attempts: r.attempts, lifetime: r.lifetime_s, hops: r.hops });
         st.sent.set(key, m);
       }
     }
@@ -533,7 +725,7 @@ function renderIdent() {
   if (st.ident) {
     parts.push(`<span>Node <b>${st.ident.id}</b></span>`);
     if (st.ident.station) parts.push(`<span>Station <b>${esc(st.ident.station)}</b></span>`);
-    parts.push(`<span>Network <b>${st.ident.net}</b></span>`);
+    parts.push(`<span>${T("Network")} <b>${st.ident.net}</b></span>`);
   }
   if (st.radio) {
     const r = st.radio;
@@ -557,17 +749,20 @@ function renderSelf() {
     ["Uptime", now === null || st.down ? "—" : duration(now / 1000)],
     ["Neighbors", st.ident ? `${up}` : "—"],
     ["Reachable", st.ident ? `${reach}` : "—"],
-    ["Store", st.storeDepth ?? (st.ident ? held : "—")],
     ["Delivered", s ? s.delivered : "—"],
+  ];
+  const more = [
+    ["Store", st.storeDepth ?? (st.ident ? held : "—")],
     ["Airtime", s ? duration(s.airtime_ms / 1000) : "—"],
     ["Ack timeouts", s ? s.ack_timeouts : "—"],
     ["Link failures", s ? s.link_failures : "—"],
     ["Dropped", s ? s.evicted + s.expired + s.hop_limit_drops : "—"],
     ["Bad frames", s ? s.rx_bad_tag + s.rx_foreign + s.rx_malformed : "—"],
   ];
-  $("self").innerHTML = tiles.map(([k, v]) => `<div><span>${k}</span><b>${esc(v)}</b></div>`).join("");
+  $("self").innerHTML = tiles.map(([k, v]) => `<div><span>${T(k)}</span><b>${esc(v)}</b></div>`).join("");
+  $("self-more").innerHTML = more.map(([k, v]) => `<div><span>${T(k)}</span><b>${esc(v)}</b></div>`).join("");
   if (!s) { $("frames").innerHTML = ""; return; }
-  $("frames").innerHTML = `<tr><th>Frames</th>${FRAME_TYPES.map(t => `<th>${t}</th>`).join("")}</tr>` +
+  $("frames").innerHTML = `<tr><th>${T("Frames")}</th>${FRAME_TYPES.map(t => `<th>${T(t)}</th>`).join("")}</tr>` +
     `<tr><td>Sent</td>${FRAME_TYPES.map((_, i) => `<td>${s.tx_frames[i]}</td>`).join("")}</tr>` +
     `<tr><td>Received</td>${FRAME_TYPES.map((_, i) => `<td>${s.rx_frames[i]}</td>`).join("")}</tr>`;
 }
@@ -583,12 +778,12 @@ function flagBadges(f) {
 function renderNodes() {
   const rows = [...st.nodes].sort((a, b) => a.node - b.node);
   if (!rows.length) {
-    $("nodes").innerHTML = `<tr><td class="empty">${transport ? st.down ? "Node is down." : "No status heard yet; each node broadcasts about once a minute." : "Connect to a node."}</td></tr>`;
+    $("nodes").innerHTML = `<tr><td class="empty">${transport ? st.down ? "Node is down." : "No status heard yet." : "Connect to a node."}</td></tr>`;
     return;
   }
-  $("nodes").innerHTML = `<tr><th>Node</th><th>Station</th><th>Battery</th><th>Uptime</th><th>Store</th><th>Lost</th><th>Health</th><th>Heard</th><th>Its neighbors (ETX)</th></tr>` +
+  $("nodes").innerHTML = `<tr><th>Node</th><th>${T("Station")}</th><th>Battery</th><th>${T("Uptime")}</th><th>${T("Store")}</th><th>${T("Lost")}</th><th>${T("Health")}</th><th>Heard</th><th>Its neighbors (${T("ETX")})</th></tr>` +
     rows.map(n => `<tr class="${n.stale ? "stale" : ""}">
-      <td><b>${n.node}</b>${simDead(n.node) ? ' <span class="badge b-poor">killed</span>' : n.stale ? ' <span class="badge">stale</span>' : ""}</td>
+      <td><b>${n.node}</b>${simDead(n.node) ? ' <span class="badge b-poor">killed</span>' : n.stale ? ' <span class="badge term" data-term="stale">stale</span>' : ""}</td>
       <td>${esc(n.station || "—")}</td><td>${volts(n.batt_mv)}</td><td>${duration(n.uptime_s)}</td>
       <td>${n.store}</td><td>${n.lost}</td><td>${flagBadges(n.flags)}</td><td>${ago(n.heard_ms)}</td>
       <td class="wrap">${n.neighbors.map(([id, e]) => `${id} <span class="${etxClass(e)}">(${etxText(e)})</span>`).join(", ") || "—"}</td></tr>`).join("");
@@ -596,17 +791,16 @@ function renderNodes() {
 
 function renderLinks() {
   renderPing();
-  $("phi-down").textContent = phiDown();
   $("nb-count").textContent = st.links.length ? `${st.links.filter(l => l.up).length} up` : "";
   if (!st.links.length) {
     $("links").innerHTML = `<tr><td class="empty">${transport ? st.down ? "Node is down." : "No neighbors heard." : "—"}</td></tr>`;
     return;
   }
   const ping = st.ping;
-  $("links").innerHTML = `<tr><th>Node</th><th>State</th><th>ETX</th><th title="Suspicion that the neighbor has gone silent; down at ${phiDown()}">φ</th><th title="Mean gap between its periodic HELLOs ± standard deviation, as learned by this node">HELLO every</th><th>We hear</th><th>Hears us</th><th>RSSI</th><th>SNR</th><th>Heard</th></tr>` +
+  $("links").innerHTML = `<tr><th>Node</th><th>State</th><th>${T("ETX")}</th><th>${T("φ")}</th><th>${T("HELLO every")}</th><th>${T("We hear")}</th><th>${T("Hears us")}</th><th>${T("RSSI")}</th><th>${T("SNR")}</th><th>Heard</th></tr>` +
     [...st.links].sort((a, b) => a.id - b.id).map(l => {
-      const state = !l.up ? '<span class="badge b-poor">down</span>' : l.bidir ? '<span class="badge b-good">up</span>' : '<span class="badge b-fair">one-way</span>';
-      const answered = ping && pingAnswered(l) ? ' <span class="badge b-good" title="A HELLO from this neighbor arrived after the ping">answered</span>' : "";
+      const state = !l.up ? '<span class="badge b-poor">down</span>' : l.bidir ? '<span class="badge b-good">up</span>' : '<span class="badge b-fair term" data-term="one-way">one-way</span>';
+      const answered = ping && pingAnswered(l) ? ' <span class="badge b-good term" data-term="answered">answered</span>' : "";
       return `<tr class="${l.up ? "" : "stale"}"><td><b>${l.id}</b></td><td>${state}${answered}</td>
         <td class="${etxClass(l.etx)}">${etxText(l.etx)}</td><td>${phiCell(l)}</td><td>${helloText(l)}</td><td>${pct(l.rxq)}</td><td>${pct(l.txq)}</td>
         <td>${l.rssi} dBm</td><td>${l.snr} dB</td><td>${ago(l.heard_ms)}</td></tr>`;
@@ -653,17 +847,17 @@ function renderRoutes() {
     $("routes").innerHTML = `<tr><td class="empty">${transport ? st.down ? "Node is down." : "No routes yet." : "—"}</td></tr>`;
     return;
   }
-  $("routes").innerHTML = `<tr><th>Destination</th><th>Next hop</th><th>Metric (ETX)</th><th>Seq</th><th></th></tr>` +
+  $("routes").innerHTML = `<tr><th>Destination</th><th>${T("Next hop")}</th><th>${T("Metric")} (ETX)</th><th>${T("Seq")}</th><th></th></tr>` +
     [...st.routes].sort((a, b) => a.dest - b.dest).map(r => `<tr class="${r.retracted ? "stale" : ""}">
       <td><b>${r.dest}</b></td><td>${r.retracted ? "—" : r.next === r.dest ? `${r.next} <span class="muted">direct</span>` : r.next}</td>
       <td>${etxText(r.metric)}</td><td>${r.seq}</td>
-      <td>${r.retracted ? '<span class="badge b-poor">lost</span>' : ""}</td></tr>`).join("");
+      <td>${r.retracted ? '<span class="badge b-poor term" data-term="lost">lost</span>' : ""}</td></tr>`).join("");
 }
 
 function renderSent() {
-  const rows = [...st.sent.values()].sort((a, b) => b.id - a.id);
-  if (!rows.length) { $("sent").innerHTML = `<tr><td class="empty">Messages sent from this node appear here with their delivery state.</td></tr>`; return; }
-  $("sent").innerHTML = `<tr><th>Id</th><th>To</th><th>Type</th><th>Priority</th><th>State</th><th>Detail</th><th>Content</th></tr>` +
+  const rows = [...st.sent.values()].filter(m => !st.ident || m.origin === st.ident.id).sort((a, b) => b.id - a.id);
+  if (!rows.length) { $("sent").innerHTML = `<tr><td class="empty">Nothing sent yet.</td></tr>`; return; }
+  $("sent").innerHTML = `<tr><th>Id</th><th>To</th><th>${T("Type")}</th><th>${T("Priority")}</th><th>State</th><th>Detail</th><th>Content</th></tr>` +
     rows.map(m => {
       const detail = m.state === "delivered" ? (m.result && m.result !== "delivered" ? m.result : "") : (m.reason && m.reason !== "none" ? m.reason.replace("_", " ") : "");
       return `<tr><td>${m.id}</td><td>${m.dest ?? "—"}</td><td>${m.type || "—"}</td><td>${m.prio || "—"}</td>
@@ -673,11 +867,26 @@ function renderSent() {
 }
 
 function renderInbox() {
-  $("rx-count").textContent = st.inbox.length || "";
-  if (!st.inbox.length) { $("inbox").innerHTML = `<div class="empty">Messages addressed to this node appear here.</div>`; return; }
-  $("inbox").innerHTML = st.inbox.map(m => `<div class="m">
-    <div class="meta">from <b>${m.origin}</b> · ${m.type} · ${m.prio} · ${m.hops} hop${m.hops === 1 ? "" : "s"} · ${m.at}</div>
-    <div class="body ${m.text === undefined ? "hex" : ""}">${esc(m.text ?? m.hex)}</div></div>`).join("");
+  const messages = new Map(st.inbox.map(m => [`${m.origin}:${m.id}`, m]));
+  if (st.ident) {
+    for (const m of st.sent.values()) {
+      if (m.origin === st.ident.id || m.dest !== st.ident.id || m.state !== "delivered" || m.content === undefined) continue;
+      const key = `${m.origin}:${m.id}`;
+      if (!messages.has(key)) messages.set(key, { ...m, recovered: true });
+    }
+  }
+  const rows = [...messages.values()];
+  $("rx-count").textContent = rows.length || "";
+  if (!rows.length) { $("inbox").innerHTML = `<div class="empty">Nothing received yet.</div>`; return; }
+  $("inbox").innerHTML = rows.map(m => {
+    const hex = m.recovered ? m.type === "tel" : m.text === undefined;
+    const content = m.recovered ? m.content : m.text ?? m.hex;
+    const hops = m.hops === undefined ? "" : ` · ${m.hops} ${T(m.hops === 1 ? "hop" : "hops", "hops")}`;
+    const when = m.recovered ? " · delivery confirmed from this page's send history" : ` · ${m.at}`;
+    return `<div class="m">
+      <div class="meta">from <b>${m.origin}</b> · ${m.type} · ${m.prio || "normal"}${hops}${when}</div>
+      <div class="body ${hex ? "hex" : ""}">${esc(content)}</div></div>`;
+  }).join("");
 }
 
 function renderKnown() {
@@ -744,7 +953,7 @@ function renderMap() {
   if (!list.length) out = `<text x="${cx}" y="${cy}" class="lbl">${transport ? "Waiting for the first status broadcasts" : "Not connected"}</text>`;
   svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
   svg.innerHTML = out;
-  $("map-hint").textContent = sim ? "Click a node to plug into it. " : "";
+  $("map-hint").textContent = sim ? "Click a node to plug in. " : "";
 }
 window.addEventListener("resize", renderMap);
 $("map").addEventListener("click", ev => {
@@ -880,7 +1089,7 @@ async function attachTo(id) {
   if (!transport || !st.sim || id === st.sim.attached) return;
   const res = await command(`@attach ${id}`, false).catch(e => ({ ok: false, reason: e.message }));
   if (res.ok) {
-    st = Object.assign(fresh(), { sim: { ...st.sim, attached: id } });
+    st = Object.assign(fresh(), { sim: { ...st.sim, attached: id }, sent: st.sent });
     $("log").innerHTML = "";
     log(`plugged into node ${id}`, "ev");
     renderAll();

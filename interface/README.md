@@ -41,14 +41,11 @@ The simulator panel also changes the run while it goes; the command-line options
 
 All of these run in `serve.py` in simulated time, using the console's `@t`, `@kill`, `@revive`, `@cut`, `@join` and `@topo` lines, so they keep working when the clock is stepped or sped up. Nodes and links taken down this way are labeled in the panel; a node killed by hand is never revived automatically.
 
-## Panels
+## Interface
 
-- **This node:** identity, radio settings from the driver's `radio` event, uptime, neighbor and route counts, store depth, delivery and error counters, frames by type.
-- **Network:** a map of every node heard, with links from this node's neighbor table and every status broadcast, colored by ETX; stale nodes are gray.
-- **Nodes:** the node table: battery, uptime, store, health flags, last heard, each node's neighbors.
-- **Neighbors** and **Routes:** this node's tables. Each neighbor shows φ, the node's suspicion that it has gone silent (φ accrual, [SPEC.md](../SPEC.md) Section 7.3): 1 means a 10 % chance it is alive and only late, 2 means 1 %, and the node declares it down at 8 (`phi_down` from `id`). The page recomputes φ every second from the neighbor's last HELLO time and its learned HELLO interval (**HELLO every**, mean ± deviation), so the bar climbs live between polls; hovering it shows the silence after which the neighbor is dropped. **Ping neighbors** sends the `ping` command: the node broadcasts a HELLO at once and every neighbor that hears it answers with its own, marked **answered** for 30 s. Pings are rate-limited by the node (`too_soon`).
-- **Send** and **Received:** text, command and telemetry messages with their delivery state; messages addressed to this node.
-- **Console:** every line the node sends, and a command box for the line protocol.
+The main view keeps connection status, a short summary of this node, the network map, and message send/receive in view. Message type, priority, and lifetime are under **Message options**. Detailed node, neighbor, and route tables, sent history, and the console are under **Diagnostics and raw console**. The console can show plain-language explanations or raw protocol output. Resting the pointer on a dotted-underlined term shows what it means.
+
+**Ping neighbors** (in **This node**) broadcasts a HELLO beacon at once; neighbors that hear it answer, and are marked **answered** in the neighbor table. Each neighbor also shows φ, the node's suspicion that it has gone silent ([SPEC.md](../SPEC.md) Section 7.3), recomputed every second so it climbs live; the node drops the neighbor at 8.
 
 ## Techniques
 
