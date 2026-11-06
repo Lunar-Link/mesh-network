@@ -108,6 +108,7 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
 #log .tx { color: var(--text); font-weight: 600; }
 #log .err { color: var(--poor); }
 #log .row { color: var(--muted); }
+#log .help { color: var(--text); white-space: pre; }
 .console-bar { display: flex; gap: 8px; margin-top: 6px; align-items: center; }
 .console-bar input[type=text] { flex: 1; font-family: var(--mono); }
 .console-bar label { color: var(--muted); font-size: 12px; display: flex; gap: 4px; align-items: center; }
@@ -153,8 +154,8 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
   <button id="tab-overview" role="tab" aria-controls="panel-overview" aria-selected="true">Overview</button>
   <button id="tab-messages" role="tab" aria-controls="panel-messages" aria-selected="false" tabindex="-1">Messages <span class="count" id="tab-rx-count"></span></button>
   <button id="tab-network" role="tab" aria-controls="panel-network" aria-selected="false" tabindex="-1">Routing</button>
-  <button id="tab-sim" role="tab" aria-controls="panel-sim" aria-selected="false" tabindex="-1" hidden>Simulator</button>
   <button id="tab-console" role="tab" aria-controls="panel-console" aria-selected="false" tabindex="-1">Console</button>
+  <button id="tab-sim" role="tab" aria-controls="panel-sim" aria-selected="false" tabindex="-1" hidden>Simulator</button>
 </nav>
 
 <main>
@@ -288,7 +289,7 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
     <h2>Console</h2>
     <div id="log"></div>
     <div class="console-bar">
-      <input type="text" id="cmd" placeholder="id, nodes, links, routes, msgs, stats, status, ping, send 2 n 600 hello ..." autocomplete="off">
+      <input type="text" id="cmd" placeholder="Type help for the list of commands, e.g. links, routes, send 2 n 600 hello" autocomplete="off">
       <label>View <select id="console-mode"><option value="meaning">Plain language</option><option value="raw">Raw output</option></select></label>
       <label><input type="checkbox" id="show-poll"> show polling</label>
       <button id="btn-clear">Clear</button>
@@ -1229,10 +1230,36 @@ $("send").addEventListener("submit", async ev => {
 });
 
 /* Console input */
+const HELP = [  // the line protocol of SPEC.md Section 11; "help" itself is answered by the page, not the node
+  ["id", "this node's identity and settings"],
+  ["nodes", "status reports heard from the network"],
+  ["links", "neighbors, with ETX, signal, and φ"],
+  ["routes", "the route table"],
+  ["msgs", "messages this node originated or holds"],
+  ["stats", "frame and delivery counters"],
+  ["status", "broadcast this node's status now"],
+  ["ping", "ask neighbors to answer with a HELLO"],
+  ["send <dest> <u|n|r> <lifetime_s> <text>", "send a text message (urgent, normal, routine)"],
+  ["cmd <dest> <lifetime_s> <text>", "send a command"],
+  ["tel <dest> <lifetime_s> <hex>", "send telemetry as hex"],
+  ["cancel <id>", "drop a message this node sent, if not yet transmitted"],
+];
+const SIM_HELP = [
+  ["@attach <node>", "plug into another node"],
+  ["@kill <node>, @revive <node>", "take a node down or bring it back"],
+  ["@cut <a> <b>, @join <a> <b> [loss]", "remove or restore a link"],
+];
+function showHelp() {
+  const rows = transport && transport.kind === "sim" ? [...HELP, ...SIM_HELP] : HELP;
+  const width = Math.max(...rows.map(([c]) => c.length));
+  log("Commands:", "help");
+  for (const [c, what] of rows) log(`  ${c.padEnd(width)}  ${what}`, "help");
+}
 $("cmd").addEventListener("keydown", async ev => {
-  if (ev.key !== "Enter" || !transport) return;
+  if (ev.key !== "Enter") return;
   const line = $("cmd").value.trim();
-  if (!line) return;
+  if (line.toLowerCase() === "help" || line === "?") { $("cmd").value = ""; showHelp(); return; }
+  if (!line || !transport) return;
   $("cmd").value = "";
   try {
     const res = await command(line, false);
