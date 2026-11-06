@@ -6,12 +6,29 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lunar Mesh Node</title>
 <link rel="icon" href="data:,">
+<script>
+// Apply the saved theme (or the system's) before the page paints; storage may be unavailable.
+try {
+  const t = localStorage.getItem("lunar-mesh-theme");
+  if (t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches)) document.documentElement.dataset.theme = "dark";
+} catch {}
+</script>
 <style>
 :root {
   --bg: #cfd1e1; --panel: #ffffff; --panel-2: #f6f6f6; --line: #d9d9d9;
   --text: #1a1a1a; --muted: #6b6b6b; --accent: #1f5fbf;
   --good: #1e8a4c; --fair: #a86f00; --poor: #c62f2f; --stale: #9a9a9a;
   --mono: Consolas, "Cascadia Mono", monospace;
+  --input: #ffffff; --button: #f0f0f0; --hover: #e6e6e6; --control-border: #b5b5b5;
+  --error-bg: #fff4f4; --node-self: #e3ecfa; --node-dead: #fdeaea; --node-hover: #eef3fb;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #14171c; --panel: #1d222a; --panel-2: #171c23; --line: #39424f;
+  --text: #e6eaf0; --muted: #a8b2c0; --accent: #80b3ff;
+  --good: #6ed79a; --fair: #edc46a; --poor: #ff8989; --stale: #929eae;
+  --input: #1d222a; --button: #2b3440; --hover: #394657; --control-border: #586475;
+  --error-bg: #352329; --node-self: #293f60; --node-dead: #47262b; --node-hover: #2b3440;
 }
 * { box-sizing: border-box; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 "Segoe UI", Arial, sans-serif; }
@@ -20,25 +37,30 @@ header h1 { font-size: 16px; margin: 0; }
 .ident { display: flex; gap: 16px; flex-wrap: wrap; color: var(--muted); }
 .ident b { color: var(--text); }
 .spacer { flex: 1; }
-button, select, input { font: inherit; color: var(--text); background: #fff; border: 1px solid #b5b5b5; border-radius: 5px; padding: 3px 8px; }
-button { cursor: pointer; background: #f0f0f0; }
-button:hover:not(:disabled) { background: #e6e6e6; }
+button, select, input { font: inherit; color: var(--text); background: var(--input); border: 1px solid var(--control-border); border-radius: 5px; padding: 3px 8px; }
+button { cursor: pointer; background: var(--button); }
+button:hover:not(:disabled) { background: var(--hover); }
 button:disabled { opacity: .5; cursor: default; }
 #conn { color: var(--muted); }
 #conn.on { color: var(--good); font-weight: 600; }
-main { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; padding: 12px 16px 24px; }
+[hidden] { display: none !important; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.tabs button { padding: 8px 14px; border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; color: var(--muted); }
+.tabs button:hover:not(:disabled) { background: transparent; color: var(--text); }
+.tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.tabs .count { font-size: 12px; font-weight: normal; }
+button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+main { padding: 12px 16px 24px; }
+.tab-panel { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; align-items: start; }
 section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
 section h2 { font-size: 14px; margin: 0 0 8px; display: flex; align-items: baseline; gap: 8px; }
 section h2 .count, section h2 .note { font-weight: normal; color: var(--muted); font-size: 13px; }
 summary { cursor: pointer; color: var(--muted); }
 details { margin-top: 10px; }
 details > summary { font-size: 13px; }
-.detail-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; margin-top: 10px; }
-.detail-grid section { grid-column: span 6; }
-.detail-grid section.wide { grid-column: span 12; }
 .c4 { grid-column: span 4; } .c5 { grid-column: span 5; } .c6 { grid-column: span 6; }
 .c7 { grid-column: span 7; } .c8 { grid-column: span 8; } .c12 { grid-column: span 12; }
-@media (max-width: 1000px) { main > section { grid-column: span 12; } }
+@media (max-width: 1000px) { .tab-panel > section { grid-column: span 12; } }
 .kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px 12px; }
 .kv span { display: block; color: var(--muted); font-size: 12px; }
 .kv b { font-size: 16px; font-variant-numeric: tabular-nums; }
@@ -60,13 +82,13 @@ tr.stale td { color: var(--stale); }
 .phi .bar i.good { background: var(--good); } .phi .bar i.fair { background: var(--fair); } .phi .bar i.poor { background: var(--poor); }
 section h2 .tools { margin-left: auto; display: flex; gap: 8px; align-items: baseline; font-weight: normal; font-size: 12px; }
 section h2 .tools button { padding: 1px 8px; font-size: 12px; }
-.term { border-bottom: 1px dotted #9a9a9a; cursor: help; }
+.term { border-bottom: 1px dotted var(--stale); cursor: help; }
 #tip { position: fixed; z-index: 50; display: none; max-width: 280px; padding: 6px 9px; background: #2b2d3a; color: #fff; font-size: 12px; line-height: 1.35; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.25); pointer-events: none; }
 #map { width: 100%; height: 300px; display: block; }
 #map text { fill: var(--text); font-size: 12px; text-anchor: middle; dominant-baseline: central; }
 #map .lbl { fill: var(--muted); font-size: 10px; }
 #map .hit { cursor: pointer; }
-#map .hit:hover circle { stroke-width: 4; fill: #eef3fb; }
+#map .hit:hover circle { stroke-width: 4; fill: var(--node-hover); }
 form.send { display: grid; grid-template-columns: 90px 1fr auto; gap: 8px; margin-bottom: 10px; }
 form.send label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 2px; }
 form.send input, form.send select { width: 100%; }
@@ -80,7 +102,7 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
 .inbox .meta { color: var(--muted); font-size: 12px; }
 .inbox .body { word-break: break-word; }
 .inbox .hex { font-family: var(--mono); font-size: 12px; }
-#log { height: 240px; overflow-y: auto; font: 12px/1.4 var(--mono); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+#log { height: max(240px, calc(100vh - 230px)); overflow-y: auto; font: 12px/1.4 var(--mono); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
 #log div { white-space: pre-wrap; word-break: break-all; }
 #log .ev { color: var(--accent); }
 #log .tx { color: var(--text); font-weight: 600; }
@@ -89,8 +111,9 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
 .console-bar { display: flex; gap: 8px; margin-top: 6px; align-items: center; }
 .console-bar input[type=text] { flex: 1; font-family: var(--mono); }
 .console-bar label { color: var(--muted); font-size: 12px; display: flex; gap: 4px; align-items: center; }
-#banner, #down { display: none; grid-column: span 12; background: #fff4f4; border: 1px solid var(--poor); border-radius: 8px; color: var(--poor); padding: 8px 12px; }
+#banner, #down { display: none; margin-bottom: 12px; background: var(--error-bg); border: 1px solid var(--poor); border-radius: 8px; color: var(--poor); padding: 8px 12px; }
 #simbar { display: none; grid-column: span 12; }
+#simbar .simctl { margin-top: 14px; }
 #simbar .nodes { display: flex; flex-wrap: wrap; gap: 6px; }
 #simbar .sn { display: flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 6px; padding: 3px 4px 3px 8px; }
 #simbar .sn.dead b { color: var(--poor); text-decoration: line-through; }
@@ -123,12 +146,84 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
   <button id="btn-usb">Connect USB</button>
   <button id="btn-sim" hidden>Simulator</button>
   <button id="btn-close" hidden>Disconnect</button>
+  <button id="btn-theme" type="button" aria-pressed="false">Dark mode</button>
 </header>
+
+<nav class="tabs" role="tablist" aria-label="Sections">
+  <button id="tab-overview" role="tab" aria-controls="panel-overview" aria-selected="true">Overview</button>
+  <button id="tab-messages" role="tab" aria-controls="panel-messages" aria-selected="false" tabindex="-1">Messages <span class="count" id="tab-rx-count"></span></button>
+  <button id="tab-network" role="tab" aria-controls="panel-network" aria-selected="false" tabindex="-1">Routing</button>
+  <button id="tab-sim" role="tab" aria-controls="panel-sim" aria-selected="false" tabindex="-1" hidden>Simulator</button>
+  <button id="tab-console" role="tab" aria-controls="panel-console" aria-selected="false" tabindex="-1">Console</button>
+</nav>
 
 <main>
   <div id="banner"></div>
   <div id="down"></div>
 
+  <div id="panel-overview" class="tab-panel" role="tabpanel" aria-labelledby="tab-overview">
+  <section class="c5">
+    <h2>This node <span id="self-state"></span>
+      <span class="tools"><span class="muted" id="ping-note"></span>
+        <button id="btn-ping" data-term="Ping" disabled>Ping neighbors</button></span></h2>
+    <div class="kv" id="self"></div>
+    <details>
+      <summary>More node statistics</summary>
+      <div class="kv" id="self-more" style="margin-top:8px"></div>
+      <div class="scroll" style="margin-top:12px"><table id="frames"></table></div>
+    </details>
+  </section>
+
+  <section class="c7">
+    <h2>Network <span class="count" id="net-count"></span></h2>
+    <svg id="map" role="img" aria-label="Network map"></svg>
+    <div class="note muted" style="font-size:12px"><span id="map-hint"></span>Line color is <span class="term" data-term="ETX">ETX</span>: green ≤ 1.5, amber ≤ 3, red above. Dashed: stale report.</div>
+  </section>
+  </div>
+
+  <div id="panel-messages" class="tab-panel" role="tabpanel" aria-labelledby="tab-messages" hidden>
+  <section class="c7">
+    <h2>Send</h2>
+    <form class="send" id="send">
+      <label>To<input id="f-dest" type="number" min="1" max="254" list="known" required></label>
+      <label>Content<input id="f-text" type="text" maxlength="200" autocomplete="off" required></label>
+      <button class="go" type="submit">Send</button>
+      <details class="send-options">
+        <summary>Message options</summary>
+        <div class="option-grid">
+          <label><span class="term" data-term="Type">Type</span><select id="f-type"><option value="text">Text</option><option value="cmd">Command</option><option value="tel">Telemetry (hex)</option></select></label>
+          <label><span class="term" data-term="Priority">Priority</span><select id="f-prio"><option value="u">Urgent</option><option value="n" selected>Normal</option><option value="r">Routine</option></select></label>
+          <label><span class="term" data-term="Lifetime">Lifetime (seconds)</span><input id="f-life" type="number" min="1" value="600" required></label>
+        </div>
+      </details>
+    </form>
+    <datalist id="known"></datalist>
+    <h2 style="margin-top:14px">Sent</h2>
+    <div class="scroll"><table id="sent"></table></div>
+  </section>
+
+  <section class="c5">
+    <h2>Received <span class="count" id="rx-count"></span></h2>
+    <div class="inbox" id="inbox"></div>
+  </section>
+  </div>
+
+  <div id="panel-network" class="tab-panel" role="tabpanel" aria-labelledby="tab-network" hidden>
+  <section class="c12">
+    <h2>Nodes</h2>
+    <div class="scroll"><table id="nodes"></table></div>
+  </section>
+  <section class="c6">
+    <h2>Neighbors <span class="count" id="nb-count"></span></h2>
+    <div class="scroll"><table id="links"></table></div>
+  </section>
+  <section class="c6">
+    <h2>Routes <span class="count" id="rt-count"></span></h2>
+    <div class="scroll"><table id="routes"></table></div>
+  </section>
+  </div>
+
+  <div id="panel-sim" class="tab-panel" role="tabpanel" aria-labelledby="tab-sim" hidden>
   <section id="simbar">
     <h2>Simulator <span class="note">plug into a node, or kill one</span></h2>
     <div class="nodes" id="sim-nodes"></div>
@@ -139,8 +234,6 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
       <button id="btn-join">Join</button>
       <span id="sim-links"></span>
     </div>
-    <details>
-    <summary>Simulator controls</summary>
     <div class="simctl">
       <div class="k">Clock</div>
       <div class="v">
@@ -187,81 +280,21 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
         <span id="sim-err"></span>
       </div>
     </div>
-    </details>
   </section>
+  </div>
 
-  <section class="c5">
-    <h2>This node <span id="self-state"></span>
-      <span class="tools"><span class="muted" id="ping-note"></span>
-        <button id="btn-ping" data-term="Ping" disabled>Ping neighbors</button></span></h2>
-    <div class="kv" id="self"></div>
-    <details>
-      <summary>More node statistics</summary>
-      <div class="kv" id="self-more" style="margin-top:8px"></div>
-      <div class="scroll" style="margin-top:12px"><table id="frames"></table></div>
-    </details>
-  </section>
-
-  <section class="c7">
-    <h2>Network <span class="count" id="net-count"></span></h2>
-    <svg id="map" role="img" aria-label="Network map"></svg>
-    <div class="note muted" style="font-size:12px"><span id="map-hint"></span>Line color is <span class="term" data-term="ETX">ETX</span>: green ≤ 1.5, amber ≤ 3, red above. Dashed: stale report.</div>
-  </section>
-
-  <section class="c8">
-    <h2>Send</h2>
-    <form class="send" id="send">
-      <label>To<input id="f-dest" type="number" min="1" max="254" list="known" required></label>
-      <label>Content<input id="f-text" type="text" maxlength="200" autocomplete="off" required></label>
-      <button class="go" type="submit">Send</button>
-      <details class="send-options">
-        <summary>Message options</summary>
-        <div class="option-grid">
-          <label><span class="term" data-term="Type">Type</span><select id="f-type"><option value="text">Text</option><option value="cmd">Command</option><option value="tel">Telemetry (hex)</option></select></label>
-          <label><span class="term" data-term="Priority">Priority</span><select id="f-prio"><option value="u">Urgent</option><option value="n" selected>Normal</option><option value="r">Routine</option></select></label>
-          <label><span class="term" data-term="Lifetime">Lifetime (seconds)</span><input id="f-life" type="number" min="1" value="600" required></label>
-        </div>
-      </details>
-    </form>
-    <datalist id="known"></datalist>
-    <details>
-      <summary>Sent message history</summary>
-      <div class="scroll"><table id="sent"></table></div>
-    </details>
-  </section>
-
-  <section class="c4">
-    <h2>Received <span class="count" id="rx-count"></span></h2>
-    <div class="inbox" id="inbox"></div>
-  </section>
-
-  <details class="wide c12">
-    <summary>Diagnostics and raw console</summary>
-    <div class="detail-grid">
-      <section class="wide">
-        <h2>Nodes</h2>
-        <div class="scroll"><table id="nodes"></table></div>
-      </section>
-      <section>
-        <h2>Neighbors <span class="count" id="nb-count"></span></h2>
-        <div class="scroll"><table id="links"></table></div>
-      </section>
-      <section>
-        <h2>Routes <span class="count" id="rt-count"></span></h2>
-        <div class="scroll"><table id="routes"></table></div>
-      </section>
-      <section class="wide">
-        <h2>Console</h2>
-        <div id="log"></div>
-        <div class="console-bar">
-          <input type="text" id="cmd" placeholder="id, nodes, links, routes, msgs, stats, status, ping, send 2 n 600 hello ..." autocomplete="off">
-          <label>View <select id="console-mode"><option value="meaning">Plain language</option><option value="raw">Raw output</option></select></label>
-          <label><input type="checkbox" id="show-poll"> show polling</label>
-          <button id="btn-clear">Clear</button>
-        </div>
-      </section>
+  <div id="panel-console" class="tab-panel" role="tabpanel" aria-labelledby="tab-console" hidden>
+  <section class="c12">
+    <h2>Console</h2>
+    <div id="log"></div>
+    <div class="console-bar">
+      <input type="text" id="cmd" placeholder="id, nodes, links, routes, msgs, stats, status, ping, send 2 n 600 hello ..." autocomplete="off">
+      <label>View <select id="console-mode"><option value="meaning">Plain language</option><option value="raw">Raw output</option></select></label>
+      <label><input type="checkbox" id="show-poll"> show polling</label>
+      <button id="btn-clear">Clear</button>
     </div>
-  </details>
+  </section>
+  </div>
 </main>
 
 <script>
@@ -319,6 +352,57 @@ function nodeNow() {
 }
 function noteClock(t) {
   if (typeof t === "number") st.clock = { t, at: performance.now() };
+}
+
+/* Theme: light or dark, remembered across visits. */
+function updateThemeButton() {
+  const dark = document.documentElement.dataset.theme === "dark";
+  $("btn-theme").textContent = dark ? "Light mode" : "Dark mode";
+  $("btn-theme").setAttribute("aria-pressed", String(dark));
+}
+$("btn-theme").onclick = () => {
+  const theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = theme;
+  updateThemeButton();
+  try { localStorage.setItem("lunar-mesh-theme", theme); } catch {}
+};
+updateThemeButton();
+
+/* Tabs: only visibility changes, so the connection, polling, and console history carry on in the background. */
+const tabs = [...document.querySelectorAll('[role="tab"]')];
+let rxTotal = 0, rxSeen = 0;  // received-message count, and how many were on screen when Messages was last open
+const currentTab = () => tabs.find(t => t.getAttribute("aria-selected") === "true");
+function renderRxBadge() {
+  if (currentTab() === $("tab-messages") || rxSeen > rxTotal) rxSeen = rxTotal;
+  const unread = rxTotal - rxSeen;
+  $("tab-rx-count").textContent = unread ? `(${unread} new)` : "";
+}
+let restoreSim = false;  // the saved tab was Simulator: open it once the simulator connects
+function selectTab(tab) {
+  restoreSim = false;
+  for (const t of tabs) {
+    const on = t === tab;
+    t.setAttribute("aria-selected", String(on));
+    t.tabIndex = on ? 0 : -1;
+    $(t.getAttribute("aria-controls")).hidden = !on;
+  }
+  try { localStorage.setItem("lunar-mesh-tab", tab.id); } catch {}
+  if (tab.id === "tab-overview") renderMap();  // the map sizes itself to its width, which is zero while hidden
+  if (tab.id === "tab-console") $("log").scrollTop = $("log").scrollHeight;
+  renderRxBadge();
+}
+for (const tab of tabs) {
+  tab.onclick = () => selectTab(tab);
+  tab.onkeydown = ev => {  // arrow keys move between tabs, per the WAI-ARIA tabs pattern
+    const shown = tabs.filter(t => !t.hidden);
+    const i = shown.indexOf(tab);
+    const next = { ArrowRight: shown[(i + 1) % shown.length], ArrowLeft: shown[(i - 1 + shown.length) % shown.length],
+      Home: shown[0], End: shown[shown.length - 1] }[ev.key];
+    if (!next) return;
+    ev.preventDefault();
+    selectTab(next);
+    next.focus();
+  };
 }
 
 /* Formatting */
@@ -877,6 +961,8 @@ function renderInbox() {
   }
   const rows = [...messages.values()];
   $("rx-count").textContent = rows.length || "";
+  rxTotal = rows.length;
+  renderRxBadge();
   if (!rows.length) { $("inbox").innerHTML = `<div class="empty">Nothing received yet.</div>`; return; }
   $("inbox").innerHTML = rows.map(m => {
     const hex = m.recovered ? m.type === "tel" : m.text === undefined;
@@ -938,7 +1024,7 @@ function renderMap() {
     const n = info.get(id);
     const me = id === attached, dead = simDead(id);
     const stale = n ? n.stale : !me;
-    const fill = dead ? "#fdeaea" : me ? "#e3ecfa" : "#fff";
+    const fill = dead ? "var(--node-dead)" : me ? "var(--node-self)" : "var(--panel)";
     const stroke = dead ? "var(--poor)" : me ? "var(--accent)" : stale ? "var(--stale)" : n && n.flags & 21 ? "var(--poor)" : "var(--good)";
     const textStyle = [me ? "font-weight:700" : "", dead ? "fill:var(--poor);text-decoration:line-through" : stale && !me ? "fill:var(--stale)" : ""].join(";");
     const label = dead ? "killed" : n && n.station ? n.station : "";
@@ -964,6 +1050,9 @@ $("map").addEventListener("click", ev => {
 /* Simulator controls */
 function renderSim() {
   $("simbar").style.display = st.sim ? "block" : "none";
+  $("tab-sim").hidden = !st.sim;
+  if (st.sim && restoreSim) selectTab($("tab-sim"));
+  if (!st.sim && currentTab() === $("tab-sim")) selectTab($("tab-overview"));
   if (!st.sim || !st.sim.alive) return;
   const alive = new Set(st.sim.alive);
   const ids = simNodeIds();
@@ -1061,7 +1150,7 @@ async function simStep() {
 $("sim-step").onclick = simStep;
 document.addEventListener("keydown", ev => {
   if (ev.key !== "ArrowRight" || !simStatus || !transport || transport.kind !== "sim") return;
-  if (ev.target.closest("input, select, textarea")) return;
+  if (ev.target.closest("input, select, textarea, [role=tab]")) return;
   ev.preventDefault();
   simStep();
 });
@@ -1272,6 +1361,10 @@ $("btn-close").onclick = () => transport && transport.close();
   } catch {}
   setConnected(null);
   renderAll();
+  try {
+    const saved = $(localStorage.getItem("lunar-mesh-tab"));
+    if (saved && tabs.includes(saved)) saved.hidden ? (restoreSim = true) : selectTab(saved);
+  } catch {}
   if (simAvailable && new URLSearchParams(location.search).has("sim")) connectSim();
 })();
 </script>
