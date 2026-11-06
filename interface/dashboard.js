@@ -18,6 +18,17 @@
     el.type = 'button'; el.textContent = label; el.onclick = action;
     return el;
   }
+  // Compact window-style control: glyph shown, label used for tooltip and screen readers.
+  function iconButton(glyph, label, action) {
+    const el = button(glyph, action);
+    el.className = 'dashboard-icon'; setLabel(el, glyph, label);
+    return el;
+  }
+  function setLabel(el, glyph, label) { el.textContent = glyph; el.title = label; el.setAttribute('aria-label', label); }
+  function setMin(card, on) {
+    setLabel(card.min, on ? '+' : '–', on ? 'Expand' : 'Minimize');
+    card.min.setAttribute('aria-expanded', String(!on));
+  }
   function persist() {
     const layout = columns.map(c => [...c.children].filter(e => e.dataset.card).map(e => e.dataset.card));
     const minimized = [...cards].filter(([, c]) => c.el.classList.contains('is-minimized')).map(([id]) => id);
@@ -28,8 +39,8 @@
     if (maximized && maximized !== card) maximize(maximized);
     const on = !card.el.classList.contains('is-maximized');
     card.el.classList.toggle('is-maximized', on);
-    if (on) { card.el.classList.remove('is-minimized'); card.min.textContent = 'Minimize'; card.min.setAttribute('aria-expanded', 'true'); }
-    card.max.textContent = on ? 'Restore size' : 'Maximize';
+    if (on) { card.el.classList.remove('is-minimized'); setMin(card, false); }
+    setLabel(card.max, on ? '❐' : '□', on ? 'Restore size (Esc)' : 'Maximize');
     card.max.setAttribute('aria-pressed', String(on));
     maximized = on ? card : null;
     persist(); resize();
@@ -37,30 +48,31 @@
   function makeCard(id, el, heading, tab = null) {
     el.dataset.card = id; el.classList.add('dashboard-card');
     const handle = document.createElement('span');
-    handle.className = 'dashboard-handle'; handle.textContent = '⠿'; handle.draggable = true;
-    handle.title = 'Drag to move this panel';
+    handle.className = 'dashboard-handle'; handle.textContent = '⠿'; handle.setAttribute('aria-hidden', 'true');
     heading.prepend(handle);
+    heading.classList.add('dashboard-titlebar'); heading.draggable = true;
+    heading.title = 'Drag to move this panel; double-click to maximize';
     const actions = document.createElement('span'); actions.className = 'dashboard-actions';
     const card = { el, tab, heading };
-    card.min = button('Minimize', () => {
+    card.min = iconButton('–', 'Minimize', () => {
       if (maximized === card) maximize(card);
-      const on = el.classList.toggle('is-minimized');
-      card.min.textContent = on ? 'Expand' : 'Minimize';
-      card.min.setAttribute('aria-expanded', String(!on)); persist(); resize();
+      setMin(card, el.classList.toggle('is-minimized')); persist(); resize();
     });
     card.min.setAttribute('aria-expanded', 'true');
-    card.max = button('Maximize', () => maximize(card));
+    card.max = iconButton('□', 'Maximize', () => maximize(card));
     card.max.setAttribute('aria-pressed', 'false');
-    const move = button('Other column', () => {
-      const target = columns[0].contains(el) ? columns[1] : columns[0];
-      dock(id, target);
-    });
-    move.title = 'Move to the other Overview column';
-    actions.append(card.min, card.max, move);
-    if (tab) actions.append(button('Return to tab', () => undock(id)));
+    actions.append(card.min, card.max);
+    if (tab) actions.append(iconButton('×', 'Return to tab', () => undock(id)));
     heading.append(actions);
-    handle.addEventListener('dragstart', ev => startDrag(ev, id));
-    handle.addEventListener('dragend', endDrag);
+    const interactive = t => t.closest?.('button, a, input, select, textarea, summary, .dashboard-actions, .tools');
+    let pressedOn = null;
+    heading.addEventListener('pointerdown', ev => { pressedOn = ev.target; });
+    heading.addEventListener('dragstart', ev => {
+      if (ev.target !== heading || interactive(pressedOn)) { ev.preventDefault(); return; }
+      startDrag(ev, id);
+    });
+    heading.addEventListener('dragend', endDrag);
+    heading.addEventListener('dblclick', ev => { if (!interactive(ev.target)) { window.getSelection()?.removeAllRanges(); maximize(card); } });
     cards.set(id, card);
     return card;
   }
@@ -72,7 +84,7 @@
     const panel = document.getElementById('panel-' + id);
     const cardId = 'tab-' + id;
     tab.draggable = true;
-    tab.title = 'Drag into Overview, or use Add panel in Overview';
+    tab.title = 'Drag into Overview to dock as a panel';
     tab.addEventListener('dragstart', ev => startDrag(ev, cardId));
     tab.addEventListener('dragend', endDrag);
     const wrapper = document.createElement('section');
@@ -83,21 +95,11 @@
   }
   const toolbar = document.createElement('div'); toolbar.className = 'dashboard-toolbar';
   const hint = document.createElement('span'); hint.className = 'layout-hint';
-  hint.textContent = 'Drag a tab into either column, or add a panel here. Drag ⠿ to rearrange.';
-  const label = document.createElement('label'); label.textContent = 'Add panel';
-  const picker = document.createElement('select');
-  label.append(picker);
-  function updatePicker() {
-    picker.replaceChildren(new Option('Choose a tab…', ''));
-    for (const [id, card] of cards) {
-      if (card.tab && !card.tab.hidden && !overview.contains(card.el)) picker.add(new Option(card.heading.childNodes[1].textContent.trim(), id));
-    }
-  }
-  picker.onchange = () => { if (picker.value) dock(picker.value, columns[0]); };
-  toolbar.append(hint, label, button('Reset layout', () => {
+  hint.textContent = 'Drag a tab into either column. Drag a panel title to rearrange; double-click it to maximize.';
+  toolbar.append(hint, button('Reset layout', () => {
     for (const [id, card] of cards) {
       if (card.tab) undock(id);
-      card.el.classList.remove('is-minimized'); card.min.textContent = 'Minimize'; card.min.setAttribute('aria-expanded', 'true');
+      card.el.classList.remove('is-minimized'); setMin(card, false);
     }
     if (maximized) maximize(maximized);
     defaults.forEach((ids, i) => ids.forEach(id => dock(id, columns[i])));
@@ -112,7 +114,7 @@
       card.tab.dataset.docked = 'true';
     }
     column.insertBefore(card.el, before || column.querySelector('.dashboard-drop'));
-    persist(); updatePicker(); resize();
+    persist(); resize();
   }
   function undock(id) {
     const card = cards.get(id); if (!card?.tab) return;
@@ -120,8 +122,8 @@
     document.querySelector('main').append(card.panel);
     card.panel.setAttribute('role', 'tabpanel'); card.panel.setAttribute('aria-labelledby', card.tab.id);
     card.panel.hidden = true; card.el.remove(); delete card.tab.dataset.docked;
-    picker.focus();
-    persist(); updatePicker(); resize();
+    card.tab.focus();
+    persist(); resize();
   }
   function startDrag(ev, id) {
     dragging = id; ev.dataTransfer.setData('text/plain', id); ev.dataTransfer.effectAllowed = 'move';
@@ -160,7 +162,7 @@
   };
   new MutationObserver(() => {
     const card = cards.get('tab-sim');
-    card.el.hidden = card.tab.hidden; updatePicker();
+    card.el.hidden = card.tab.hidden;
   }).observe(document.getElementById('tab-sim'), { attributes: true, attributeFilter: ['hidden'] });
   document.addEventListener('keydown', ev => { if (ev.key === 'Escape' && maximized) { const card = maximized; maximize(card); card.max.focus(); } });
   const layout = Array.isArray(saved?.layout) ? saved.layout : defaults;
@@ -173,8 +175,8 @@
   });
   for (const [i, id] of ['self', 'network'].entries()) if (!seen.has(id)) dock(id, columns[i], columns[i].lastElementChild);
   for (const id of Array.isArray(saved?.minimized) ? saved.minimized : []) {
-    const card = cards.get(id); if (card) { card.el.classList.add('is-minimized'); card.min.textContent = 'Expand'; card.min.setAttribute('aria-expanded', 'false'); }
+    const card = cards.get(id); if (card) { card.el.classList.add('is-minimized'); setMin(card, true); }
   }
   const simCard = cards.get('tab-sim'); simCard.el.hidden = simCard.tab.hidden;
-  updatePicker(); persist();
+  persist();
 })();
