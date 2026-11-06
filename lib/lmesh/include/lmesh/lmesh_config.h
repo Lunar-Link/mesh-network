@@ -58,6 +58,24 @@
 #define LMESH_ETX_WINDOW 16
 #endif
 
+/* Phi accrual liveness (SPEC.md Section 7.3). With LMESH_PHI_ACCRUAL 0 the fixed miss limit above is used instead;
+ * phi is still computed for the interface either way. */
+#ifndef LMESH_PHI_ACCRUAL
+#define LMESH_PHI_ACCRUAL 1
+#endif
+#ifndef LMESH_PHI_WINDOW
+#define LMESH_PHI_WINDOW 16
+#endif
+#ifndef LMESH_PHI_THRESHOLD
+#define LMESH_PHI_THRESHOLD 800
+#endif
+#ifndef LMESH_PHI_MIN_SD_MS
+#define LMESH_PHI_MIN_SD_MS (LMESH_HELLO_PERIOD_MS / 2)
+#endif
+#ifndef LMESH_PHI_PAUSE_MS
+#define LMESH_PHI_PAUSE_MS 0
+#endif
+
 #ifndef LMESH_ROUTE_HOLD_MS
 #define LMESH_ROUTE_HOLD_MS 35000
 #endif

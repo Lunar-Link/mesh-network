@@ -1,0 +1,1402 @@
+<!doctype html>
+<!-- Node interface: talks the mesh-network line protocol over USB serial (Web Serial) or to the simulator bridge in serve.py. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lunar Mesh Node</title>
+<link rel="stylesheet" href="dashboard.css">
+<link rel="icon" type="image/x-icon" href="/favicon.ico">
+<script>
+// Apply the saved theme (or the system's) before the page paints; storage may be unavailable.
+try {
+  const t = localStorage.getItem("lunar-mesh-theme");
+  if (t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches)) document.documentElement.dataset.theme = "dark";
+} catch {}
+</script>
+<style>
+:root {
+  --bg: #cfd1e1; --panel: #ffffff; --panel-2: #f6f6f6; --line: #d9d9d9;
+  --text: #1a1a1a; --muted: #6b6b6b; --accent: #1f5fbf;
+  --good: #1e8a4c; --fair: #a86f00; --poor: #c62f2f; --stale: #9a9a9a;
+  --mono: Consolas, "Cascadia Mono", monospace;
+  --input: #ffffff; --button: #f0f0f0; --hover: #e6e6e6; --control-border: #b5b5b5;
+  --error-bg: #fff4f4; --node-self: #e3ecfa; --node-dead: #fdeaea; --node-hover: #eef3fb;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #14171c; --panel: #1d222a; --panel-2: #171c23; --line: #39424f;
+  --text: #e6eaf0; --muted: #a8b2c0; --accent: #80b3ff;
+  --good: #6ed79a; --fair: #edc46a; --poor: #ff8989; --stale: #929eae;
+  --input: #1d222a; --button: #2b3440; --hover: #394657; --control-border: #586475;
+  --error-bg: #352329; --node-self: #293f60; --node-dead: #47262b; --node-hover: #2b3440;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 "Segoe UI", Arial, sans-serif; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 16px; margin: 0; }
+.ident { display: flex; gap: 16px; flex-wrap: wrap; color: var(--muted); }
+.ident b { color: var(--text); }
+.spacer { flex: 1; }
+button, select, input { font: inherit; color: var(--text); background: var(--input); border: 1px solid var(--control-border); border-radius: 5px; padding: 3px 8px; }
+button { cursor: pointer; background: var(--button); }
+button:hover:not(:disabled) { background: var(--hover); }
+button:disabled { opacity: .5; cursor: default; }
+#conn { color: var(--muted); }
+#conn.on { color: var(--good); font-weight: 600; }
+[hidden] { display: none !important; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+.tabs button { padding: 8px 14px; border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; color: var(--muted); }
+.tabs button:hover:not(:disabled) { background: transparent; color: var(--text); }
+.tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+.tabs .count { font-size: 12px; font-weight: normal; }
+button:focus-visible, input:focus-visible, select:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+main { padding: 12px 16px 24px; }
+.tab-panel { display: grid; grid-template-columns: repeat(12, 1fr); gap: 12px; align-items: start; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; min-width: 0; }
+section h2 { font-size: 14px; margin: 0 0 8px; display: flex; align-items: baseline; gap: 8px; }
+section h2 .count, section h2 .note { font-weight: normal; color: var(--muted); font-size: 13px; }
+summary { cursor: pointer; color: var(--muted); }
+details { margin-top: 10px; }
+details > summary { font-size: 13px; }
+.c4 { grid-column: span 4; } .c5 { grid-column: span 5; } .c6 { grid-column: span 6; }
+.c7 { grid-column: span 7; } .c8 { grid-column: span 8; } .c12 { grid-column: span 12; }
+@media (max-width: 1000px) { .tab-panel > section { grid-column: span 12; } }
+.kv { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 6px 12px; }
+.kv span { display: block; color: var(--muted); font-size: 12px; }
+.kv b { font-size: 16px; font-variant-numeric: tabular-nums; }
+.scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+th, td { text-align: left; padding: 4px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: normal; font-size: 12px; }
+td.wrap { white-space: normal; word-break: break-word; }
+tr.stale td { color: var(--stale); }
+.empty { color: var(--muted); padding: 8px 2px; }
+.badge { display: inline-block; padding: 0 5px; font-size: 12px; border: 1px solid var(--line); border-radius: 5px; margin-right: 4px; }
+.good { color: var(--good); } .fair { color: var(--fair); } .poor { color: var(--poor); } .muted { color: var(--muted); }
+.b-good { border-color: var(--good); color: var(--good); }
+.b-fair { border-color: var(--fair); color: var(--fair); }
+.b-poor { border-color: var(--poor); color: var(--poor); }
+.phi { display: flex; align-items: center; gap: 6px; }
+.phi .bar { width: 54px; height: 6px; background: var(--panel-2); border: 1px solid var(--line); border-radius: 3px; overflow: hidden; }
+.phi .bar i { display: block; height: 100%; }
+.phi .bar i.good { background: var(--good); } .phi .bar i.fair { background: var(--fair); } .phi .bar i.poor { background: var(--poor); }
+section h2 .tools { margin-left: auto; display: flex; gap: 8px; align-items: baseline; font-weight: normal; font-size: 12px; }
+section h2 .tools button { padding: 1px 8px; font-size: 12px; }
+.term { border-bottom: 1px dotted var(--stale); cursor: help; }
+#tip { position: fixed; z-index: 50; display: none; max-width: 280px; padding: 6px 9px; background: #2b2d3a; color: #fff; font-size: 12px; line-height: 1.35; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,.25); pointer-events: none; }
+#map { width: 100%; height: 300px; display: block; }
+#map text { fill: var(--text); font-size: 12px; text-anchor: middle; dominant-baseline: central; }
+#map .lbl { fill: var(--muted); font-size: 10px; }
+#map .hit { cursor: pointer; }
+#map .hit:hover circle { stroke-width: 4; fill: var(--node-hover); }
+form.send { display: grid; grid-template-columns: 90px 1fr auto; gap: 8px; margin-bottom: 10px; }
+form.send label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 2px; }
+form.send input, form.send select { width: 100%; }
+form.send .go { align-self: end; }
+form.send .send-options { grid-column: 1 / -1; }
+form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(100px, 1fr)); gap: 8px; margin-top: 8px; }
+@media (max-width: 700px) { form.send { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 700px) { form.send .option-grid { grid-template-columns: 1fr; } }
+.inbox { max-height: 320px; overflow-y: auto; }
+.inbox .m { border-bottom: 1px solid var(--line); padding: 6px 0; }
+.inbox .meta { color: var(--muted); font-size: 12px; }
+.inbox .body { word-break: break-word; }
+.inbox .hex { font-family: var(--mono); font-size: 12px; }
+#log { height: max(240px, calc(100vh - 230px)); overflow-y: auto; font: 12px/1.4 var(--mono); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+#log div { white-space: pre-wrap; word-break: break-all; }
+#log .ev { color: var(--accent); }
+#log .tx { color: var(--text); font-weight: 600; }
+#log .err { color: var(--poor); }
+#log .row { color: var(--muted); }
+#log .help { color: var(--text); white-space: pre; }
+.console-bar { display: flex; gap: 8px; margin-top: 6px; align-items: center; }
+.console-bar input[type=text] { flex: 1; font-family: var(--mono); }
+.console-bar label { color: var(--muted); font-size: 12px; display: flex; gap: 4px; align-items: center; }
+#banner, #down { display: none; margin-bottom: 12px; background: var(--error-bg); border: 1px solid var(--poor); border-radius: 8px; color: var(--poor); padding: 8px 12px; }
+#simbar { display: none; grid-column: span 12; }
+#simbar .simctl { margin-top: 14px; }
+#simbar .nodes { display: flex; flex-wrap: wrap; gap: 6px; }
+#simbar .sn { display: flex; align-items: center; gap: 4px; border: 1px solid var(--line); border-radius: 6px; padding: 3px 4px 3px 8px; }
+#simbar .sn.dead b { color: var(--poor); text-decoration: line-through; }
+#simbar .sn.att { border-color: var(--accent); }
+#simbar button { padding: 1px 6px; font-size: 12px; }
+#simbar .cut { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; color: var(--muted); font-size: 12px; }
+#simbar .cut input { width: 60px; }
+#simbar .sn .why { font-size: 11px; color: var(--poor); }
+.simctl { display: grid; grid-template-columns: 130px 1fr; gap: 8px 12px; margin-top: 10px; align-items: center; }
+.simctl > .k { color: var(--muted); font-size: 12px; }
+.simctl > .v { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; font-size: 13px; }
+.simctl .v label { display: flex; gap: 4px; align-items: center; color: var(--muted); font-size: 12px; }
+.simctl input[type=number] { width: 70px; }
+.simctl input[type=range] { width: 160px; padding: 0; }
+.simctl .val { min-width: 48px; font-variant-numeric: tabular-nums; font-weight: 600; }
+.simctl .clock { font-family: var(--mono); font-size: 13px; }
+.simctl .paused { color: var(--fair); font-weight: 600; }
+#sim-sched-list { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+#sim-sched-list .se { display: flex; gap: 8px; align-items: center; font-size: 12px; }
+#sim-err { color: var(--poor); font-size: 12px; }
+@media (max-width: 700px) { .simctl { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Lunar Mesh Node</h1>
+  <span id="conn"><span id="conn-text">Not connected</span></span>
+  <div class="ident" id="ident"></div>
+  <div class="spacer"></div>
+  <button id="btn-usb">Connect USB</button>
+  <button id="btn-sim" hidden>Simulator</button>
+  <button id="btn-close" hidden>Disconnect</button>
+  <button id="btn-theme" type="button" aria-pressed="false">Dark mode</button>
+</header>
+
+<nav class="tabs" role="tablist" aria-label="Sections">
+  <button id="tab-overview" role="tab" aria-controls="panel-overview" aria-selected="true">Overview</button>
+  <button id="tab-messages" role="tab" aria-controls="panel-messages" aria-selected="false" tabindex="-1">Messages <span class="count" id="tab-rx-count"></span></button>
+  <button id="tab-network" role="tab" aria-controls="panel-network" aria-selected="false" tabindex="-1">Routing</button>
+  <button id="tab-console" role="tab" aria-controls="panel-console" aria-selected="false" tabindex="-1">Console</button>
+  <button id="tab-sim" role="tab" aria-controls="panel-sim" aria-selected="false" tabindex="-1" hidden>Simulator</button>
+</nav>
+
+<main>
+  <div id="banner"></div>
+  <div id="down"></div>
+
+  <div id="panel-overview" class="tab-panel" role="tabpanel" aria-labelledby="tab-overview">
+  <section class="c5">
+    <h2>This node <span id="self-state"></span>
+      <span class="tools"><span class="muted" id="ping-note"></span>
+        <button id="btn-ping" data-term="Ping" disabled>Ping neighbors</button></span></h2>
+    <div class="kv" id="self"></div>
+    <details>
+      <summary>More node statistics</summary>
+      <div class="kv" id="self-more" style="margin-top:8px"></div>
+      <div class="scroll" style="margin-top:12px"><table id="frames"></table></div>
+    </details>
+  </section>
+
+  <section class="c7">
+    <h2>Network <span class="count" id="net-count"></span></h2>
+    <svg id="map" role="img" aria-label="Network map"></svg>
+    <div class="note muted" style="font-size:12px"><span id="map-hint"></span>Line color is <span class="term" data-term="ETX">ETX</span>: green ≤ 1.5, amber ≤ 3, red above. Dashed: stale report.</div>
+  </section>
+  </div>
+
+  <div id="panel-messages" class="tab-panel" role="tabpanel" aria-labelledby="tab-messages" hidden>
+  <section class="c7">
+    <h2>Send</h2>
+    <form class="send" id="send">
+      <label>To<input id="f-dest" type="number" min="1" max="254" list="known" required></label>
+      <label>Content<input id="f-text" type="text" maxlength="200" autocomplete="off" required></label>
+      <button class="go" type="submit">Send</button>
+      <details class="send-options">
+        <summary>Message options</summary>
+        <div class="option-grid">
+          <label><span class="term" data-term="Type">Type</span><select id="f-type"><option value="text">Text</option><option value="cmd">Command</option><option value="tel">Telemetry (hex)</option></select></label>
+          <label><span class="term" data-term="Priority">Priority</span><select id="f-prio"><option value="u">Urgent</option><option value="n" selected>Normal</option><option value="r">Routine</option></select></label>
+          <label><span class="term" data-term="Lifetime">Lifetime (seconds)</span><input id="f-life" type="number" min="1" value="600" required></label>
+        </div>
+      </details>
+    </form>
+    <datalist id="known"></datalist>
+    <h2 style="margin-top:14px">Sent</h2>
+    <div class="scroll"><table id="sent"></table></div>
+  </section>
+
+  <section class="c5">
+    <h2>Received <span class="count" id="rx-count"></span></h2>
+    <div class="inbox" id="inbox"></div>
+  </section>
+  </div>
+
+  <div id="panel-network" class="tab-panel" role="tabpanel" aria-labelledby="tab-network" hidden>
+  <section class="c12">
+    <h2>Nodes</h2>
+    <div class="scroll"><table id="nodes"></table></div>
+  </section>
+  <section class="c6">
+    <h2>Neighbors <span class="count" id="nb-count"></span></h2>
+    <div class="scroll"><table id="links"></table></div>
+  </section>
+  <section class="c6">
+    <h2>Routes <span class="count" id="rt-count"></span></h2>
+    <div class="scroll"><table id="routes"></table></div>
+  </section>
+  </div>
+
+  <div id="panel-sim" class="tab-panel" role="tabpanel" aria-labelledby="tab-sim" hidden>
+  <section id="simbar">
+    <h2>Simulator <span class="note">plug into a node, or kill one</span></h2>
+    <div class="nodes" id="sim-nodes"></div>
+    <div class="cut">Link
+      <input id="cut-a" type="number" min="1" max="254" placeholder="a">
+      <input id="cut-b" type="number" min="1" max="254" placeholder="b">
+      <button id="btn-cut">Cut</button>
+      <button id="btn-join">Join</button>
+      <span id="sim-links"></span>
+    </div>
+    <div class="simctl">
+      <div class="k">Clock</div>
+      <div class="v">
+        <button id="sim-run">Pause</button>
+        <label>Speed <input id="sim-speed" type="range" min="0" max="9" step="1"></label><span class="val" id="sim-speed-v"></span>
+        <label>Step <select id="sim-step-size">
+          <option value="0.5">0.5 s</option><option value="1">1 s</option><option value="5" selected>5 s</option><option value="10">10 s</option>
+          <option value="30">30 s</option><option value="60">1 min</option><option value="300">5 min</option><option value="900">15 min</option>
+        </select></label>
+        <button id="sim-step" data-tip="Advance simulated time by the step size (→ key).">Step ▸</button>
+        <span class="clock" id="sim-clock"></span>
+      </div>
+
+      <div class="k"><span class="term" data-term="Link loss">Link loss</span></div>
+      <div class="v">
+        <input id="sim-loss" type="range" min="0" max="90" step="1"><span class="val" id="sim-loss-v"></span>
+      </div>
+
+      <div class="k"><span class="term" data-term="Random outages">Random outages</span></div>
+      <div class="v">
+        <label>Nodes down <input id="sim-cn" type="range" min="0" max="50" step="1"></label><span class="val" id="sim-cn-v"></span>
+        <label>Links down <input id="sim-cl" type="range" min="0" max="50" step="1"></label><span class="val" id="sim-cl-v"></span>
+        <label>Mean outage <input id="sim-cm" type="number" min="1" max="86400" step="1"> s</label>
+        <label><input id="sim-cs" type="checkbox"> spare the plugged-in node</label>
+        <button id="sim-heal" data-tip="End every random outage now.">Heal all</button>
+      </div>
+
+      <div class="k"><span class="term" data-term="Scheduled downtime">Scheduled downtime</span></div>
+      <div class="v">
+        <label>Node <select id="sim-sn"></select></label>
+        <label>Starts in <input id="sim-ss" type="number" min="0" value="10"> s</label>
+        <label>Down for <input id="sim-sd" type="number" min="1" value="60"> s</label>
+        <label>Repeat every <input id="sim-se" type="number" min="0" value="0"> s</label>
+        <button id="sim-sadd">Add</button>
+        <div id="sim-sched-list"></div>
+      </div>
+
+      <div class="k">Restart network</div>
+      <div class="v">
+        <label>Topology <select id="sim-rt"><option>random</option><option>line</option><option>ring</option><option>diamond</option></select></label>
+        <label>Nodes <input id="sim-rn" type="number" min="2" max="16"></label>
+        <label>Seed <input id="sim-rs" type="number" min="0"></label>
+        <button id="sim-restart" data-tip="Start a fresh simulated network. All node state is lost.">Restart</button>
+        <span id="sim-err"></span>
+      </div>
+    </div>
+  </section>
+  </div>
+
+  <div id="panel-console" class="tab-panel" role="tabpanel" aria-labelledby="tab-console" hidden>
+  <section class="c12">
+    <h2>Console</h2>
+    <div id="log"></div>
+    <div class="console-bar">
+      <input type="text" id="cmd" placeholder="Type help for the list of commands, e.g. links, routes, send 2 n 600 hello" autocomplete="off">
+      <label>View <select id="console-mode"><option value="meaning">Plain language</option><option value="raw">Raw output</option></select></label>
+      <label><input type="checkbox" id="show-poll"> show polling</label>
+      <button id="btn-clear">Clear</button>
+    </div>
+  </section>
+  </div>
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const REFRESH_MS = 5000;
+const FRAME_TYPES = ["HELLO", "DATA", "HOP_ACK", "STATUS", "ROUTE_REQ"];
+const FLAGS = [[1, "low battery", "poor"], [2, "store > 75 %", "fair"], [4, "radio fault", "poor"], [8, "rebooted", "fair"], [16, "no neighbors", "poor"]];
+const STATE_CLASS = { queued: "", transmitted: "b-fair", delivered: "b-good", expired: "b-poor", failed: "b-poor" };
+const BW_KHZ = { 7: "125 kHz", 8: "250 kHz", 9: "500 kHz" };
+
+let transport = null;
+let speed = 1;      // simulated ms per real ms right now (0 while paused)
+let simStatus = null;  // the bridge's clock and control settings
+const SPEEDS = [0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 50, 100];
+let st;
+
+function fresh() {
+  return {
+    ident: null, radio: null, links: [], routes: [], nodes: [], msgs: [], stats: null,
+    sent: new Map(), inbox: [], storeDepth: null, clock: null, sim: null, down: false, ping: null,
+  };
+}
+st = fresh();
+let simIds = new Set();  // every simulator node seen this connection, so killed nodes stay on screen
+
+/* Live state the attached node reports; cleared when the simulator kills it. */
+function clearLive() {
+  Object.assign(st, { links: [], routes: [], nodes: [], msgs: [], stats: null, storeDepth: null });
+}
+
+/* Take in a simulator @topo reply and track whether the attached node is alive. */
+function noteSim(topo) {
+  topo.alive.forEach(id => simIds.add(id));
+  topo.links.forEach(([a, b]) => { simIds.add(a); simIds.add(b); });
+  const down = !topo.alive.includes(topo.attached);
+  if (st.down && !down) {
+    st = Object.assign(fresh(), { sim: topo });  // revived: the node restarted with empty tables
+    $("log").innerHTML = "";
+    log(`node ${topo.attached} revived`, "ev");
+  } else {
+    if (down && !st.down) { clearLive(); log(`node ${topo.attached} is down`, "err"); }
+    st.sim = topo;
+  }
+  st.down = down;
+}
+function simNodeIds() {
+  return [...simIds].filter(x => Number.isInteger(x) && x > 0 && x < 255).sort((a, b) => a - b);
+}
+
+/* Node clock: the latest event time plus elapsed wall time. */
+function nodeNow() {
+  if (!st.clock) return null;
+  return st.clock.t + (performance.now() - st.clock.at) * speed;
+}
+function noteClock(t) {
+  if (typeof t === "number") st.clock = { t, at: performance.now() };
+}
+
+/* Theme: light or dark, remembered across visits. */
+function updateThemeButton() {
+  const dark = document.documentElement.dataset.theme === "dark";
+  $("btn-theme").textContent = dark ? "Light mode" : "Dark mode";
+  $("btn-theme").setAttribute("aria-pressed", String(dark));
+}
+$("btn-theme").onclick = () => {
+  const theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  document.documentElement.dataset.theme = theme;
+  updateThemeButton();
+  try { localStorage.setItem("lunar-mesh-theme", theme); } catch {}
+};
+updateThemeButton();
+
+/* Tabs: only visibility changes, so the connection, polling, and console history carry on in the background. */
+const tabs = [...document.querySelectorAll('[role="tab"]')];
+let rxTotal = 0, rxSeen = 0;  // received-message count, and how many were on screen when Messages was last open
+const currentTab = () => tabs.find(t => t.getAttribute("aria-selected") === "true");
+function renderRxBadge() {
+  if (currentTab() === $("tab-messages") || rxSeen > rxTotal) rxSeen = rxTotal;
+  const unread = rxTotal - rxSeen;
+  $("tab-rx-count").textContent = unread ? `(${unread} new)` : "";
+}
+let restoreSim = false;  // the saved tab was Simulator: open it once the simulator connects
+function selectTab(tab) {
+  if (window.meshDashboard?.openDocked(tab.id)) return;
+  restoreSim = false;
+  for (const t of tabs) {
+    const on = t === tab;
+    t.setAttribute("aria-selected", String(on));
+    t.tabIndex = on ? 0 : -1;
+    $(t.getAttribute("aria-controls")).hidden = t.dataset.docked === "true" ? false : !on;
+  }
+  try { localStorage.setItem("lunar-mesh-tab", tab.id); } catch {}
+  if (tab.id === "tab-overview") renderMap();  // the map sizes itself to its width, which is zero while hidden
+  if (tab.id === "tab-console") $("log").scrollTop = $("log").scrollHeight;
+  renderRxBadge();
+}
+for (const tab of tabs) {
+  tab.onclick = () => selectTab(tab);
+  tab.onkeydown = ev => {  // arrow keys move between tabs, per the WAI-ARIA tabs pattern
+    const shown = tabs.filter(t => !t.hidden);
+    const i = shown.indexOf(tab);
+    const next = { ArrowRight: shown[(i + 1) % shown.length], ArrowLeft: shown[(i - 1 + shown.length) % shown.length],
+      Home: shown[0], End: shown[shown.length - 1] }[ev.key];
+    if (!next) return;
+    ev.preventDefault();
+    selectTab(next);
+    next.focus();
+  };
+}
+
+/* Formatting */
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+function etxClass(e) {
+  if (e === "inf" || e === undefined || e === null) return "poor";
+  return e <= 1.5 ? "good" : e <= 3 ? "fair" : "poor";
+}
+const etxText = e => e === "inf" ? "∞" : Number(e).toFixed(2);
+function ago(ms) {
+  const now = nodeNow();
+  if (now === null || ms === undefined) return "—";
+  const s = Math.max(0, Math.round((now - ms) / 1000));
+  return s < 90 ? `${s} s ago` : s < 5400 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago`;
+}
+function duration(s) {
+  if (s === null || s === undefined) return "—";
+  s = Math.floor(s);
+  const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
+  return d ? `${d} d ${h} h` : h ? `${h} h ${m} min` : m ? `${m} min ${s % 60} s` : `${s} s`;
+}
+const volts = mv => mv ? (mv / 1000).toFixed(2) + " V" : "—";
+const pct = q => Math.round(q / 255 * 100) + " %";
+
+/* Phi accrual, as the node computes it (SPEC 7.3): phi = log10(1 + e^z), z = y (1.5976 + 0.070566 y^2),
+   y = (t - mean - pause) / sd, t = time since the neighbor's last HELLO. Computed here between polls so it climbs live. */
+const PHI_MAX = 136.6;
+function phiAt(t, mean, sd) {
+  const y = Math.max(-16, Math.min(16, (t - mean) / Math.max(sd, 1)));
+  const z = y * (1.5976 + 0.070566 * y * y);
+  const p = z > 0 ? z / Math.LN10 + Math.log10(1 + Math.exp(-z)) : Math.log10(1 + Math.exp(z));
+  return Math.min(PHI_MAX, p);
+}
+const phiDown = () => (st.ident && st.ident.phi_down) || 8;
+const phiPause = () => (st.ident && st.ident.phi_pause_ms) || 0;
+function livePhi(l) {
+  const now = nodeNow();
+  if (now === null || l.hello_at_ms === undefined || !l.hello_ms) return l.phi;
+  return phiAt(now - l.hello_at_ms, l.hello_ms + phiPause(), l.hello_sd_ms);
+}
+/* Silence after the last HELLO at which phi reaches the down threshold. */
+function silenceLimit(l) {
+  let lo = 0, hi = 16;
+  for (let i = 0; i < 40; i++) { const m = (lo + hi) / 2; if (phiAt(m, 0, 1) >= phiDown()) hi = m; else lo = m; }
+  return l.hello_ms + phiPause() + hi * l.hello_sd_ms;
+}
+function phiClass(p) {
+  return p < 1 ? "good" : p < phiDown() / 2 ? "fair" : "poor";
+}
+function phiCell(l) {
+  if (l.phi === undefined) return "—";
+  if (!l.up) return '<span class="muted">—</span>';
+  const p = livePhi(l);
+  const w = Math.min(100, p / phiDown() * 100);
+  const limit = l.hello_ms ? silenceLimit(l) : null;
+  const tipLine = limit === null ? GLOSSARY["φ"] : `Dropped after ${(limit / 1000).toFixed(0)} s without a HELLO.`;
+  return `<span class="phi" data-tip="${tipLine}"><span class="bar"><i class="${phiClass(p)}" style="width:${w.toFixed(0)}%"></i></span><span class="${phiClass(p)}">${p.toFixed(2)}</span></span>`;
+}
+const helloText = l => l.hello_ms ? `${(l.hello_ms / 1000).toFixed(1)} s <span class="muted">± ${(l.hello_sd_ms / 1000).toFixed(1)}</span>` : "—";
+const clockText = () => new Date().toLocaleTimeString([], { hour12: false });
+
+/* Plain-language meanings for terms on the page. Rest the pointer on a dotted-underlined term to see one. */
+const GLOSSARY = {
+  "ETX": "Expected transmissions: how many tries a message needs to cross this link, counting the acknowledgment. 1.0 is perfect; higher means a weaker link.",
+  "φ": "Suspicion that this neighbor has gone silent, from how regularly its HELLO beacons usually arrive. 1 means a 10 % chance it is alive and only late, 2 means 1 %. The node drops the neighbor at 8.",
+  "HELLO": "A short beacon every node broadcasts about every 10 s, so neighbors know it is there and how well they hear it.",
+  "HELLO every": "Average time between this neighbor's HELLO beacons, ± how much it varies. Lost beacons make it longer and more spread out.",
+  "Ping": "Broadcast a HELLO beacon now. Every neighbor that hears it answers with its own.",
+  "answered": "A HELLO from this neighbor arrived after the ping.",
+  "RSSI": "Received signal strength, in dBm. Closer to 0 is stronger; around −120 is very weak.",
+  "SNR": "Signal-to-noise ratio, in dB: how far the signal stands above background noise. Higher is better.",
+  "We hear": "Share of this neighbor's recent HELLO beacons that this node received.",
+  "Hears us": "Share of this node's recent HELLO beacons that the neighbor reports receiving.",
+  "one-way": "We hear this neighbor, but it has not reported hearing us, so it is not used for routing yet.",
+  "Next hop": "The neighbor a message is handed to first on its way to the destination.",
+  "Metric": "Total ETX along the path to the destination. Lower is better.",
+  "Seq": "Route sequence number set by the destination. A higher number means newer route information.",
+  "lost": "No route to this destination right now. Messages for it wait in the store.",
+  "stale": "No status heard from this node for a while, so its information may be out of date.",
+  "Station": "The amateur radio call sign the node identifies with.",
+  "Store": "Messages this node is holding, waiting to be forwarded or confirmed.",
+  "Lost": "Messages that node dropped (expired or pushed out of a full store) since its last status.",
+  "Health": "Warning flags the node reports about itself.",
+  "Uptime": "Time since the node last started.",
+  "Neighbors": "Nearby nodes heard in both directions.",
+  "Reachable": "Destinations this node currently has a route to.",
+  "Delivered": "Messages delivered to this node, plus this node's own messages confirmed by a receipt.",
+  "Airtime": "Total time this node's radio has spent transmitting.",
+  "Ack timeouts": "Times the next node did not confirm receiving a frame in time.",
+  "Link failures": "Times a frame could not reach a neighbor after every retry.",
+  "Dropped": "Messages removed before delivery: expired, pushed out of a full store, or past the hop limit.",
+  "Bad frames": "Received frames rejected for a bad security tag, another network's id, or damage.",
+  "DATA": "Frames carrying messages.",
+  "HOP_ACK": "Confirmation from the next node that it took a message.",
+  "STATUS": "A node's health report, flooded through the network about once a minute.",
+  "ROUTE_REQ": "A request for fresh route information after a route is lost.",
+  "Type": "Text is for people. Command asks the destination to run an action and report a result. Telemetry is machine data, entered as hex.",
+  "Priority": "Urgent messages go first; routine ones still get a fair share.",
+  "Lifetime": "How long the network keeps trying to deliver the message before giving up.",
+  "hops": "How many radio links the message crossed.",
+  "Network": "Network id. Nodes ignore frames from other networks.",
+  "Link loss": "Share of frames the simulator drops on every link that is up, and on links you join.",
+  "Random outages": "Share of time nodes and links spend down at random, and how long each outage lasts on average.",
+  "Scheduled downtime": "Take a node down after a delay, once or repeating. Repeat 0 means once; for example, down 300 s every 900 s for a node that sleeps to save power.",
+};
+GLOSSARY.Frames = "Radio frames this node has sent and received, by type. " + GLOSSARY.HELLO;
+/* A term with a tooltip if the glossary has it, plain text otherwise. */
+const T = (text, key = text) => GLOSSARY[key] ? `<span class="term" data-term="${esc(key)}">${text}</span>` : text;
+
+/* Tooltip: appears after the pointer rests on a term for a moment, follows tables that re-render underneath it. */
+const TIP_DELAY_MS = 700;
+const tip = document.createElement("div");
+tip.id = "tip";
+document.body.appendChild(tip);
+let tipFor = null, tipTimer = null, mouseX = 0, mouseY = 0;
+const tipText = el => el.dataset.tip || GLOSSARY[el.dataset.term] || "";
+function hideTip() {
+  clearTimeout(tipTimer);
+  tipTimer = null; tipFor = null;
+  tip.style.display = "none";
+}
+function showTip() {
+  let el = tipFor;
+  if (el && !el.isConnected) {  // the table re-rendered: use whatever term is now under the pointer
+    const now = document.elementFromPoint(mouseX, mouseY);
+    el = now && now.closest("[data-term],[data-tip]");
+  }
+  const text = el && tipText(el);
+  if (!text) { hideTip(); return; }
+  tip.textContent = text;
+  tip.style.display = "block";
+  const r = el.getBoundingClientRect();
+  const x = Math.min(Math.max(8, r.left), innerWidth - tip.offsetWidth - 8);
+  const below = r.bottom + 6 + tip.offsetHeight < innerHeight;
+  tip.style.left = `${x}px`;
+  tip.style.top = `${below ? r.bottom + 6 : r.top - tip.offsetHeight - 6}px`;
+}
+document.addEventListener("mousemove", e => { mouseX = e.clientX; mouseY = e.clientY; });
+document.addEventListener("mouseover", e => {
+  const el = e.target.closest("[data-term],[data-tip]");
+  if (el && tipFor && tipText(el) === tipText(tipFor)) { tipFor = el; return; }  // same term, re-rendered
+  hideTip();
+  if (!el) return;
+  tipFor = el;
+  tipTimer = setTimeout(showTip, TIP_DELAY_MS);
+});
+document.addEventListener("mousedown", hideTip);
+window.addEventListener("scroll", hideTip);  // the page, not the console's own auto-scroll
+document.addEventListener("wheel", hideTip, { passive: true });
+
+/* Console log */
+function log(text, cls, meaning = text) {
+  const box = $("log");
+  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 4;
+  const div = document.createElement("div");
+  if (cls) div.className = cls;
+  div.dataset.time = clockText();
+  div.dataset.raw = text;
+  div.dataset.meaning = meaning;
+  div.textContent = `${div.dataset.time}  ${$("console-mode").value === "raw" ? text : meaning}`;
+  box.appendChild(div);
+  while (box.childElementCount > 600) box.firstChild.remove();
+  if (atBottom) box.scrollTop = box.scrollHeight;
+}
+
+function explainCommand(line) {
+  const [verb, ...args] = line.trim().split(/\s+/);
+  const names = {
+    id: "Checking this node's identity",
+    nodes: "Checking status reports from the network",
+    links: "Checking nearby node links",
+    routes: "Checking paths to other nodes",
+    msgs: "Checking stored messages",
+    stats: "Checking node counters",
+    status: "Broadcasting this node's status",
+    ping: "Pinging neighbors with a HELLO beacon",
+  };
+  if (names[verb]) return `${names[verb]}…`;
+  if (["send", "cmd", "tel"].includes(verb)) {
+    const dest = args[0] || "?";
+    const action = verb === "send" ? "message" : verb === "cmd" ? "command" : "telemetry";
+    return `Sending a ${action} to node ${dest}…`;
+  }
+  return `Sending command: ${line}`;
+}
+
+function explainLine(raw) {
+  let o;
+  try { o = JSON.parse(raw); } catch { return raw; }
+
+  if (o.ev) {
+    switch (o.ev) {
+      case "boot": return "Node started.";
+      case "error": return `Node reported an error: ${o.what || "unknown error"}.`;
+      case "radio":
+        return o.state === "ready" ? `Radio is ready (${o.driver || "radio"}).` : `Radio ${o.state || "status changed"}${o.reply ? `: ${o.reply}` : ""}.`;
+      case "neighbor":
+        return `Neighbor ${o.id} is ${o.state === "up" ? "reachable" : "down"}${o.etx !== undefined ? ` (ETX ${o.etx})` : ""}.`;
+      case "link":
+        return `Link to node ${o.id}: ETX ${o.etx ?? "—"}, signal ${o.rssi ?? "—"} dBm, signal-to-noise ${o.snr ?? "—"} dB.`;
+      case "route":
+        return o.next ? `Path to node ${o.dest} now goes through node ${o.next} (cost ${o.metric ?? "unknown"}).` : `No route to node ${o.dest} is currently available.`;
+      case "msg": {
+        const state = ({ queued: "queued", transmitted: "sent to the next node", delivered: "delivered", expired: "expired before delivery", failed: "failed" })[o.state] || o.state || "updated";
+        const extra = o.reason && o.reason !== "none" ? ` (${String(o.reason).replaceAll("_", " ")})` : o.result && o.result !== "delivered" ? ` (${o.result})` : "";
+        return `Message ${o.id} to node ${o.dest}: ${state}${extra}.`;
+      }
+      case "rx":
+        return `Received a ${o.type || "data"} message from node ${o.origin} over ${o.hops} hop${o.hops === 1 ? "" : "s"}: ${o.text ?? o.hex ?? "[no content]"}`;
+      case "status": return `Received a status update from node ${o.node}.`;
+      case "store": return `Message store now has ${o.depth} item${o.depth === 1 ? "" : "s"}.`;
+      default: return raw;
+    }
+  }
+
+  if (o.ok === false && o.reason === "too_soon") return "Ping refused: the last one was too recent.";
+  if (o.ok === false) return `Command failed: ${String(o.reason || "unknown reason").replaceAll("_", " ")}.`;
+  if (o.id !== undefined && o.net !== undefined) return `This is node ${o.id} on network ${o.net}${o.station ? ` (${o.station})` : ""}.`;
+  if (o.dest !== undefined && o.next !== undefined) {
+    return o.retracted || !o.next ? `Node ${o.dest} is unreachable.` : `To reach node ${o.dest}, send through node ${o.next} (route cost ${o.metric ?? "unknown"}; sequence ${o.seq ?? "unknown"}).`;
+  }
+  if (o.batt_mv !== undefined && o.node !== undefined) return `Node ${o.node} status: battery ${volts(o.batt_mv)}, uptime ${duration(o.uptime_s)}, ${o.neighbors?.length ?? 0} neighbors.`;
+  if (o.etx !== undefined && o.id !== undefined && o.up !== undefined) {
+    return `Neighbor ${o.id} is ${o.up ? "reachable" : "down"}; ${o.bidir ? "the link works both ways" : "the link is not confirmed in both directions"} (ETX ${o.etx}${o.phi !== undefined ? `, φ ${o.phi}` : ""}).`;
+  }
+  if (o.delivered !== undefined && o.ack_timeouts !== undefined) return `Node counters: ${o.delivered} messages delivered, ${o.ack_timeouts} acknowledgment timeouts, ${o.link_failures} link failures.`;
+  if (o.role !== undefined && o.origin !== undefined && o.id !== undefined) return `Message ${o.id} from node ${o.origin}: ${o.state || o.role}${o.dest !== undefined ? `, addressed to node ${o.dest}` : ""}.`;
+  if (o.ok === true && o.origin !== undefined && o.id !== undefined) return `Message ${o.id} accepted by node ${o.origin}.`;
+  if (o.ok === true) return "Command completed.";
+  return raw;
+}
+
+$("console-mode").addEventListener("change", () => {
+  const mode = $("console-mode").value;
+  const box = $("log");
+  const atBottom = box.scrollTop + box.clientHeight >= box.scrollHeight - 4;
+  for (const row of box.children) row.textContent = `${row.dataset.time}  ${row.dataset[mode] || row.dataset.raw}`;
+  if (atBottom) box.scrollTop = box.scrollHeight;
+});
+
+/* Command queue: one command on the wire at a time; dump rows collect until the end line. */
+const queue = [];
+let pending = null;
+function command(line, quiet = true) {
+  return new Promise((resolve, reject) => {
+    queue.push({ line, quiet, resolve, reject });
+    pump();
+  });
+}
+function pump() {
+  if (pending || !queue.length || !transport) return;
+  pending = queue.shift();
+  pending.rows = [];
+  pending.timer = setTimeout(() => finish(new Error(`no reply to "${pending.line}"`)), 4000);
+  if (!pending.quiet || $("show-poll").checked) log("> " + pending.line, "tx", explainCommand(pending.line));
+  transport.send(pending.line).catch(e => finish(e));
+}
+function finish(err, result) {
+  const p = pending;
+  if (!p) return;
+  pending = null;
+  clearTimeout(p.timer);
+  if (err) p.reject(err); else p.resolve(result);
+  pump();
+}
+function dropQueue() {
+  if (pending) finish(new Error("disconnected"));
+  while (queue.length) queue.shift().reject(new Error("disconnected"));
+}
+
+function onLine(raw) {
+  let o;
+  try { o = JSON.parse(raw); } catch { log(raw); return; }
+  if (o.ev) {
+    log(raw, o.ev === "error" || (o.ev === "radio" && o.state === "error") ? "err" : "ev", explainLine(raw));
+    onEvent(o);
+    return;
+  }
+  const show = pending && (!pending.quiet || $("show-poll").checked);
+  if (show || !pending) log(raw, o.ok === false ? "err" : "row", explainLine(raw));
+  if (!pending) return;
+  if ("end" in o) finish(null, { rows: pending.rows, truncated: !!o.truncated });
+  else if ("ok" in o) finish(null, o);
+  else pending.rows.push(o);
+}
+
+/* Events */
+let refreshSoon = null;
+function scheduleRefresh() {
+  if (refreshSoon) return;
+  refreshSoon = setTimeout(() => { refreshSoon = null; refresh(); }, 800);
+}
+
+function onEvent(e) {
+  noteClock(e.t);
+  switch (e.ev) {
+    case "boot":
+      st = Object.assign(fresh(), { sim: st.sim });
+      $("banner").style.display = "none";
+      start();
+      return;
+    case "error":
+      showBanner(`Node reported an error: ${e.what || "unknown"}`);
+      break;
+    case "radio":
+      st.radio = e;
+      if (e.state === "error") showBanner(`Radio error: ${e.cmd || ""} → ${e.reply || ""}`);
+      renderIdent();
+      break;
+    case "msg": {
+      const key = `${e.origin}:${e.id}`;
+      const m = st.sent.get(key) || { origin: e.origin, id: e.id };
+      Object.assign(m, { dest: e.dest, type: e.type, prio: e.prio, state: e.state, reason: e.reason, result: e.result, at: clockText() });
+      st.sent.set(key, m);
+      renderSent();
+      scheduleRefresh();
+      break;
+    }
+    case "rx":
+      st.inbox.unshift({ ...e, at: clockText() });
+      if (st.inbox.length > 200) st.inbox.pop();
+      renderInbox();
+      break;
+    case "store":
+      st.storeDepth = e.depth;
+      renderSelf();
+      break;
+    default:
+      scheduleRefresh();
+  }
+}
+
+function showBanner(text) {
+  $("banner").textContent = text;
+  $("banner").style.display = "block";
+}
+
+/* Polling */
+let refreshing = false, refreshAgain = false;
+async function dump(line) {
+  const res = await command(line);
+  if (!res.rows) throw new Error(`${line}: ${res.reason || "no rows"}`);
+  return res.rows;
+}
+async function refresh() {
+  if (!transport) return;
+  if (refreshing) { refreshAgain = true; return; }
+  refreshing = true;
+  try {
+    // Topology first: a killed node answers nothing else, and the controls must still update.
+    if (st.sim) {
+      const topo = await command("@topo");
+      if (topo.ok) noteSim(topo);
+    }
+    if (st.down) { renderAll(); return; }
+    if (!st.ident) {
+      const id = await command("id");
+      if (id.ok) { st.ident = id; renderIdent(); }
+    }
+    st.links = await dump("links");
+    st.routes = await dump("routes");
+    st.nodes = await dump("nodes");
+    st.msgs = await dump("msgs");
+    st.stats = (await dump("stats"))[0] || null;
+    for (const r of st.msgs) {
+      if (st.ident && r.origin === st.ident.id && r.role !== "relay") {
+        const key = `${r.origin}:${r.id}`;
+        const m = st.sent.get(key) || { origin: r.origin, id: r.id };
+        Object.assign(m, { dest: r.dest, type: r.type, prio: r.prio, state: r.state, attempts: r.attempts, lifetime: r.lifetime_s, hops: r.hops });
+        st.sent.set(key, m);
+      }
+    }
+    renderAll();
+  } catch (e) {
+    if (transport) log(String(e.message || e), "err");
+    if (st.sim) scheduleRefresh();  // e.g. killed mid-poll: the next pass sees it via @topo
+  } finally {
+    refreshing = false;
+    if (refreshAgain && transport) { refreshAgain = false; setTimeout(refresh, 0); }
+  }
+}
+setInterval(refresh, REFRESH_MS);
+setInterval(() => { if (transport) { renderSelf(); renderNodes(); renderLinks(); } }, 1000);
+
+function start() {
+  renderAll();
+  refresh();
+}
+
+/* Rendering */
+function renderAll() {
+  renderDown(); renderIdent(); renderSelf(); renderMap(); renderNodes(); renderLinks(); renderRoutes(); renderSent(); renderInbox(); renderSim(); renderKnown();
+}
+
+function renderDown() {
+  const down = transport && st.down;
+  $("down").style.display = down ? "block" : "none";
+  if (down) $("down").textContent = `Node ${st.sim.attached} is down: it was killed in the simulator. Revive it, or click another node on the map to plug in.`;
+  $("self-state").innerHTML = down ? '<span class="badge b-poor">down</span>' : "";
+}
+
+function renderIdent() {
+  const parts = [];
+  if (st.ident) {
+    parts.push(`<span>Node <b>${st.ident.id}</b></span>`);
+    if (st.ident.station) parts.push(`<span>Station <b>${esc(st.ident.station)}</b></span>`);
+    parts.push(`<span>${T("Network")} <b>${st.ident.net}</b></span>`);
+  }
+  if (st.radio) {
+    const r = st.radio;
+    if (r.state === "ready") {
+      const mhz = r.band_hz ? (r.band_hz / 1e6).toFixed(3) + " MHz" : "";
+      parts.push(`<span>Radio <b>${esc(r.driver)}</b> ${mhz} SF${r.sf} ${BW_KHZ[r.bw] || "BW" + r.bw} ${r.power_dbm} dBm</span>`);
+    } else {
+      parts.push(`<span>Radio <b class="poor">${esc(r.state)}</b></span>`);
+    }
+  }
+  $("ident").innerHTML = parts.join("");
+}
+
+function renderSelf() {
+  const s = st.stats;
+  const now = nodeNow();
+  const up = st.links.filter(l => l.up && l.bidir).length;
+  const reach = st.routes.filter(r => !r.retracted).length;
+  const held = st.msgs.filter(m => m.role !== "history").length;
+  const tiles = [
+    ["Uptime", now === null || st.down ? "—" : duration(now / 1000)],
+    ["Neighbors", st.ident ? `${up}` : "—"],
+    ["Reachable", st.ident ? `${reach}` : "—"],
+    ["Delivered", s ? s.delivered : "—"],
+  ];
+  const more = [
+    ["Store", st.storeDepth ?? (st.ident ? held : "—")],
+    ["Airtime", s ? duration(s.airtime_ms / 1000) : "—"],
+    ["Ack timeouts", s ? s.ack_timeouts : "—"],
+    ["Link failures", s ? s.link_failures : "—"],
+    ["Dropped", s ? s.evicted + s.expired + s.hop_limit_drops : "—"],
+    ["Bad frames", s ? s.rx_bad_tag + s.rx_foreign + s.rx_malformed : "—"],
+  ];
+  $("self").innerHTML = tiles.map(([k, v]) => `<div><span>${T(k)}</span><b>${esc(v)}</b></div>`).join("");
+  $("self-more").innerHTML = more.map(([k, v]) => `<div><span>${T(k)}</span><b>${esc(v)}</b></div>`).join("");
+  if (!s) { $("frames").innerHTML = ""; return; }
+  $("frames").innerHTML = `<tr><th>${T("Frames")}</th>${FRAME_TYPES.map(t => `<th>${T(t)}</th>`).join("")}</tr>` +
+    `<tr><td>Sent</td>${FRAME_TYPES.map((_, i) => `<td>${s.tx_frames[i]}</td>`).join("")}</tr>` +
+    `<tr><td>Received</td>${FRAME_TYPES.map((_, i) => `<td>${s.rx_frames[i]}</td>`).join("")}</tr>`;
+}
+
+/* True when the simulator says this node is killed. */
+const simDead = id => !!(st.sim && st.sim.alive && !st.sim.alive.includes(id));
+
+function flagBadges(f) {
+  const out = FLAGS.filter(([bit]) => f & bit).map(([, name, c]) => `<span class="badge b-${c}">${name}</span>`);
+  return out.length ? out.join("") : `<span class="muted">ok</span>`;
+}
+
+function renderNodes() {
+  const rows = [...st.nodes].sort((a, b) => a.node - b.node);
+  if (!rows.length) {
+    $("nodes").innerHTML = `<tr><td class="empty">${transport ? st.down ? "Node is down." : "No status heard yet." : "Connect to a node."}</td></tr>`;
+    return;
+  }
+  $("nodes").innerHTML = `<tr><th>Node</th><th>${T("Station")}</th><th>Battery</th><th>${T("Uptime")}</th><th>${T("Store")}</th><th>${T("Lost")}</th><th>${T("Health")}</th><th>Heard</th><th>Its neighbors (${T("ETX")})</th></tr>` +
+    rows.map(n => `<tr class="${n.stale ? "stale" : ""}">
+      <td><b>${n.node}</b>${simDead(n.node) ? ' <span class="badge b-poor">killed</span>' : n.stale ? ' <span class="badge term" data-term="stale">stale</span>' : ""}</td>
+      <td>${esc(n.station || "—")}</td><td>${volts(n.batt_mv)}</td><td>${duration(n.uptime_s)}</td>
+      <td>${n.store}</td><td>${n.lost}</td><td>${flagBadges(n.flags)}</td><td>${ago(n.heard_ms)}</td>
+      <td class="wrap">${n.neighbors.map(([id, e]) => `${id} <span class="${etxClass(e)}">(${etxText(e)})</span>`).join(", ") || "—"}</td></tr>`).join("");
+}
+
+function renderLinks() {
+  renderPing();
+  $("nb-count").textContent = st.links.length ? `${st.links.filter(l => l.up).length} up` : "";
+  if (!st.links.length) {
+    $("links").innerHTML = `<tr><td class="empty">${transport ? st.down ? "Node is down." : "No neighbors heard." : "—"}</td></tr>`;
+    return;
+  }
+  const ping = st.ping;
+  $("links").innerHTML = `<tr><th>Node</th><th>State</th><th>${T("ETX")}</th><th>${T("φ")}</th><th>${T("HELLO every")}</th><th>${T("We hear")}</th><th>${T("Hears us")}</th><th>${T("RSSI")}</th><th>${T("SNR")}</th><th>Heard</th></tr>` +
+    [...st.links].sort((a, b) => a.id - b.id).map(l => {
+      const state = !l.up ? '<span class="badge b-poor">down</span>' : l.bidir ? '<span class="badge b-good">up</span>' : '<span class="badge b-fair term" data-term="one-way">one-way</span>';
+      const answered = ping && pingAnswered(l) ? ' <span class="badge b-good term" data-term="answered">answered</span>' : "";
+      return `<tr class="${l.up ? "" : "stale"}"><td><b>${l.id}</b></td><td>${state}${answered}</td>
+        <td class="${etxClass(l.etx)}">${etxText(l.etx)}</td><td>${phiCell(l)}</td><td>${helloText(l)}</td><td>${pct(l.rxq)}</td><td>${pct(l.txq)}</td>
+        <td>${l.rssi} dBm</td><td>${l.snr} dB</td><td>${ago(l.heard_ms)}</td></tr>`;
+    }).join("");
+}
+
+/* Ping: one HELLO now; neighbors that hear it answer with a triggered HELLO within about 1 to 3 s of node time.
+   A neighbor counts as answered when its last-HELLO time moves after the ping. */
+const PING_WINDOW_MS = 15000;  // node time in which answers are still expected
+const PING_SHOW_MS = 30000;    // wall time the result stays on screen
+function pingAnswered(l) {
+  const p = st.ping;
+  return !!p && l.hello_at_ms !== undefined && l.hello_at_ms !== p.before.get(l.id) && l.hello_at_ms >= p.at - 1000;
+}
+function renderPing() {
+  const btn = $("btn-ping");
+  btn.disabled = !transport || st.down || !st.ident;
+  if (st.ping && performance.now() - st.ping.wall > PING_SHOW_MS) st.ping = null;  // wall time, so the result stays readable at any sim speed
+  const p = st.ping, now = nodeNow();
+  if (!p) { $("ping-note").textContent = ""; return; }
+  const up = st.links.filter(l => l.up);
+  const got = up.filter(pingAnswered).length;
+  const open = now !== null && now - p.at < PING_WINDOW_MS;
+  $("ping-note").textContent = `ping: ${got} of ${up.length} answered${open ? "…" : ""}`;
+}
+async function sendPing() {
+  const before = new Map(st.links.map(l => [l.id, l.hello_at_ms]));
+  const at = nodeNow();
+  let res;
+  try { res = await command("ping", false); } catch (e) { log(String(e.message || e), "err"); return; }
+  if (!res.ok) {
+    $("ping-note").textContent = res.reason === "too_soon" ? "ping: wait a moment" : `ping failed: ${res.reason}`;
+    return;
+  }
+  st.ping = { at: at ?? 0, before, wall: performance.now() };
+  renderLinks();
+  const k = speed > 0 ? speed : 1;  // replies come in node time; poll sooner than the 5 s cycle while they arrive
+  for (const ms of [1500, 3500, 6000]) setTimeout(refresh, ms / k);
+}
+
+function renderRoutes() {
+  $("rt-count").textContent = st.routes.length ? `${st.routes.filter(r => !r.retracted).length} reachable` : "";
+  if (!st.routes.length) {
+    $("routes").innerHTML = `<tr><td class="empty">${transport ? st.down ? "Node is down." : "No routes yet." : "—"}</td></tr>`;
+    return;
+  }
+  $("routes").innerHTML = `<tr><th>Destination</th><th>${T("Next hop")}</th><th>${T("Metric")} (ETX)</th><th>${T("Seq")}</th><th></th></tr>` +
+    [...st.routes].sort((a, b) => a.dest - b.dest).map(r => `<tr class="${r.retracted ? "stale" : ""}">
+      <td><b>${r.dest}</b></td><td>${r.retracted ? "—" : r.next === r.dest ? `${r.next} <span class="muted">direct</span>` : r.next}</td>
+      <td>${etxText(r.metric)}</td><td>${r.seq}</td>
+      <td>${r.retracted ? '<span class="badge b-poor term" data-term="lost">lost</span>' : ""}</td></tr>`).join("");
+}
+
+function renderSent() {
+  const rows = [...st.sent.values()].filter(m => !st.ident || m.origin === st.ident.id).sort((a, b) => b.id - a.id);
+  if (!rows.length) { $("sent").innerHTML = `<tr><td class="empty">Nothing sent yet.</td></tr>`; return; }
+  $("sent").innerHTML = `<tr><th>Id</th><th>To</th><th>${T("Type")}</th><th>${T("Priority")}</th><th>State</th><th>Detail</th><th>Content</th></tr>` +
+    rows.map(m => {
+      const detail = m.state === "delivered" ? (m.result && m.result !== "delivered" ? m.result : "") : (m.reason && m.reason !== "none" ? m.reason.replace("_", " ") : "");
+      return `<tr><td>${m.id}</td><td>${m.dest ?? "—"}</td><td>${m.type || "—"}</td><td>${m.prio || "—"}</td>
+        <td><span class="badge ${STATE_CLASS[m.state] || ""}">${m.state || "—"}</span></td><td class="muted">${esc(detail)}</td>
+        <td class="wrap">${esc(m.content ?? "")}</td></tr>`;
+    }).join("");
+}
+
+function renderInbox() {
+  const messages = new Map(st.inbox.map(m => [`${m.origin}:${m.id}`, m]));
+  if (st.ident) {
+    for (const m of st.sent.values()) {
+      if (m.origin === st.ident.id || m.dest !== st.ident.id || m.state !== "delivered" || m.content === undefined) continue;
+      const key = `${m.origin}:${m.id}`;
+      if (!messages.has(key)) messages.set(key, { ...m, recovered: true });
+    }
+  }
+  const rows = [...messages.values()];
+  $("rx-count").textContent = rows.length || "";
+  rxTotal = rows.length;
+  renderRxBadge();
+  if (!rows.length) { $("inbox").innerHTML = `<div class="empty">Nothing received yet.</div>`; return; }
+  $("inbox").innerHTML = rows.map(m => {
+    const hex = m.recovered ? m.type === "tel" : m.text === undefined;
+    const content = m.recovered ? m.content : m.text ?? m.hex;
+    const hops = m.hops === undefined ? "" : ` · ${m.hops} ${T(m.hops === 1 ? "hop" : "hops", "hops")}`;
+    const when = m.recovered ? " · delivery confirmed from this page's send history" : ` · ${m.at}`;
+    return `<div class="m">
+      <div class="meta">from <b>${m.origin}</b> · ${m.type} · ${m.prio || "normal"}${hops}${when}</div>
+      <div class="body ${hex ? "hex" : ""}">${esc(content)}</div></div>`;
+  }).join("");
+}
+
+function renderKnown() {
+  const ids = new Set([...st.nodes.map(n => n.node), ...st.routes.map(r => r.dest)]);
+  $("known").innerHTML = [...ids].sort((a, b) => a - b).map(id => `<option value="${id}">`).join("");
+}
+
+/* Map: the node's own links plus the neighbor lists in every status it has heard. */
+function renderMap() {
+  const svg = $("map");
+  const self = st.ident ? st.ident.id : null;
+  const info = new Map(st.nodes.map(n => [n.node, n]));
+  const ids = new Set(info.keys());
+  if (self !== null) ids.add(self);
+  const sim = !!(transport && st.sim && st.sim.alive);
+  if (sim) {
+    simNodeIds().forEach(id => ids.add(id));  // every simulated node is drawn, so any can be plugged into
+    ids.add(st.sim.attached);
+  }
+  const attached = sim ? st.sim.attached : self;
+  const edges = new Map();
+  const addEdge = (a, b, etx, stale) => {
+    if (a === b) return;
+    const key = a < b ? `${a}-${b}` : `${b}-${a}`;
+    const old = edges.get(key);
+    const worse = !old || etx === "inf" || (old.etx !== "inf" && etx > old.etx);
+    if (!old) edges.set(key, { a, b, etx, stale });
+    else edges.set(key, { a, b, etx: worse ? etx : old.etx, stale: old.stale && stale });
+    ids.add(a); ids.add(b);
+  };
+  if (self !== null) for (const l of st.links) if (l.up) addEdge(self, l.id, l.etx, false);
+  for (const n of st.nodes) for (const [id, e] of n.neighbors) addEdge(n.node, id, e, n.stale);
+
+  const list = [...ids].sort((a, b) => a - b);
+  $("net-count").textContent = list.length ? `${list.length} node${list.length === 1 ? "" : "s"}` : "";
+  const w = svg.clientWidth || 600, h = 300, cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 34;
+  const pos = new Map(list.map((id, i) => {
+    const a = -Math.PI / 2 + 2 * Math.PI * i / list.length;
+    return [id, list.length === 1 ? [cx, cy] : [cx + r * Math.cos(a), cy + r * Math.sin(a)]];
+  }));
+  const color = c => `var(--${c})`;
+  let out = "";
+  for (const e of edges.values()) {
+    const [x1, y1] = pos.get(e.a), [x2, y2] = pos.get(e.b);
+    out += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${e.stale ? color("stale") : color(etxClass(e.etx))}" stroke-width="2" ${e.stale ? 'stroke-dasharray="4 4"' : ""} opacity=".85"/>`;
+  }
+  for (const id of list) {
+    const [x, y] = pos.get(id);
+    const n = info.get(id);
+    const me = id === attached, dead = simDead(id);
+    const stale = n ? n.stale : !me;
+    const fill = dead ? "var(--node-dead)" : me ? "var(--node-self)" : "var(--panel)";
+    const stroke = dead ? "var(--poor)" : me ? "var(--accent)" : stale ? "var(--stale)" : n && n.flags & 21 ? "var(--poor)" : "var(--good)";
+    const textStyle = [me ? "font-weight:700" : "", dead ? "fill:var(--poor);text-decoration:line-through" : stale && !me ? "fill:var(--stale)" : ""].join(";");
+    const label = dead ? "killed" : n && n.station ? n.station : "";
+    const click = sim && !me;
+    out += click ? `<g class="hit" data-attach="${id}"><title>Plug into node ${id}${dead ? " (killed)" : ""}</title>` : "<g>";
+    if (me && sim) out += `<circle cx="${x}" cy="${y}" r="22" fill="none" stroke="var(--accent)" stroke-width="1.5"/>`;
+    out += `<circle cx="${x}" cy="${y}" r="17" fill="${fill}" stroke="${stroke}" stroke-width="2.5" ${dead ? 'stroke-dasharray="4 3"' : ""}/>`;
+    out += `<text x="${x}" y="${y}" style="${textStyle}">${id}</text>`;
+    if (label) out += `<text class="lbl" x="${x}" y="${y + 27}" ${dead ? 'style="fill:var(--poor)"' : ""}>${esc(label)}</text>`;
+    out += "</g>";
+  }
+  if (!list.length) out = `<text x="${cx}" y="${cy}" class="lbl">${transport ? "Waiting for the first status broadcasts" : "Not connected"}</text>`;
+  svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.innerHTML = out;
+  $("map-hint").textContent = sim ? "Click a node to plug in. " : "";
+}
+window.addEventListener("resize", renderMap);
+$("map").addEventListener("click", ev => {
+  const g = ev.target.closest("[data-attach]");
+  if (g) attachTo(Number(g.dataset.attach));
+});
+
+/* Simulator controls */
+function renderSim() {
+  $("simbar").style.display = st.sim ? "block" : "none";
+  $("tab-sim").hidden = !st.sim;
+  if (st.sim && restoreSim) selectTab($("tab-sim"));
+  if (!st.sim && currentTab() === $("tab-sim")) selectTab($("tab-overview"));
+  if (!st.sim || !st.sim.alive) return;
+  const alive = new Set(st.sim.alive);
+  const ids = simNodeIds();
+  $("sim-nodes").innerHTML = ids.map(id => {
+    const live = alive.has(id), att = id === st.sim.attached;
+    const why = simStatus && simStatus.down[id];
+    return `<div class="sn ${live ? "" : "dead"} ${att ? "att" : ""}"><b>${id}</b>
+      ${why ? `<span class="why">${why.map(r => r.startsWith("schedule") ? "scheduled" : r).join(", ")}</span>` : ""}
+      ${att ? '<span class="muted">attached</span>' : `<button data-attach="${id}">plug in</button>`}
+      <button data-sim="${live ? "@kill" : "@revive"} ${id}">${live ? "kill" : "revive"}</button></div>`;
+  }).join("");
+  const cut = simStatus ? simStatus.links_down.map(([a, b]) => `${a}-${b} (outage)`) : [];
+  $("sim-links").textContent = "links: " + st.sim.links.map(([a, b, loss]) => `${a}-${b}${loss ? ` (${loss} %)` : ""}`).concat(cut).join("  ");
+  const sel = $("sim-sn"), keep = sel.value;
+  const opts = ids.map(id => `<option value="${id}">${id}</option>`).join("");
+  if (sel.dataset.opts !== opts) { sel.innerHTML = opts; sel.dataset.opts = opts; if (keep) sel.value = keep; }
+}
+
+/* Clock, loss, outages, schedule: the bridge owns them; the page shows its status and posts changes. */
+async function simControl(req) {
+  $("sim-err").textContent = "";
+  try {
+    const r = await fetch("/sim/control", { method: "POST", body: JSON.stringify(req) });
+    const o = await r.json();
+    if (!o.ok) { $("sim-err").textContent = o.reason || "refused"; log(`simulator: ${o.reason || "refused"}`, "err"); return null; }
+    onSimStatus(o);
+    return o;
+  } catch (e) { log(`simulator: ${e.message}`, "err"); return null; }
+}
+
+function onSimStatus(s) {
+  const restarted = simStatus && s.generation !== simStatus.generation;
+  simStatus = s;
+  speed = s.paused ? 0 : s.speed;
+  st.clock = { t: s.sim_ms, at: performance.now() };  // a simulated node's clock is the simulator's clock
+  if (restarted && transport && transport.kind === "sim") {
+    st = fresh();
+    st.sim = { alive: null, links: [] };
+    simIds = new Set();
+    $("log").innerHTML = "";
+    log(`simulator restarted: ${s.args.topo} of ${s.args.nodes}, seed ${s.args.seed}`, "ev");
+    renderAll();
+    refresh();
+  }
+  renderSimCtl();
+}
+
+const nearestSpeed = x => SPEEDS.reduce((bi, v, i) => Math.abs(Math.log(v / x)) < Math.abs(Math.log(SPEEDS[bi] / x)) ? i : bi, 0);
+const idle = el => document.activeElement !== el;  // leave a control alone while the user is on it
+function clockFmt(ms) {
+  const s = Math.floor(ms / 1000), h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60);
+  return `${h}:${String(m).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}.${Math.floor(ms % 1000 / 100)}`;
+}
+const secs = ms => duration(ms / 1000);
+
+function renderSimCtl() {
+  const s = simStatus;
+  if (!s) return;
+  $("sim-run").textContent = s.paused ? "▶ Run" : "❚❚ Pause";
+  if (idle($("sim-speed"))) $("sim-speed").value = nearestSpeed(s.speed);
+  $("sim-speed-v").textContent = `×${s.speed}`;
+  $("sim-clock").innerHTML = `sim time ${clockFmt(s.sim_ms)}${s.paused ? ' <span class="paused">paused</span>' : ""}`;
+  if (idle($("sim-loss"))) $("sim-loss").value = s.loss;
+  $("sim-loss-v").textContent = `${s.loss} %`;
+  if (idle($("sim-cn"))) $("sim-cn").value = s.chaos.node_pct;
+  if (idle($("sim-cl"))) $("sim-cl").value = s.chaos.link_pct;
+  $("sim-cn-v").textContent = `${s.chaos.node_pct} %`;
+  $("sim-cl-v").textContent = `${s.chaos.link_pct} %`;
+  if (idle($("sim-cm"))) $("sim-cm").value = s.chaos.mean_s;
+  $("sim-cs").checked = s.chaos.spare_attached;
+  if (idle($("sim-rt"))) $("sim-rt").value = s.args.topo;
+  if (idle($("sim-rn")) && !$("sim-rn").value) $("sim-rn").value = s.args.nodes;
+  if (idle($("sim-rs")) && $("sim-rs").value === "") $("sim-rs").value = s.args.seed;
+  $("sim-sched-list").innerHTML = s.schedule.map(e => {
+    const when = e.next_ms === null ? "done" : `${e.down ? "back up" : "goes down"} in ${secs(e.next_ms - s.sim_ms)}`;
+    return `<div class="se"><b>node ${e.node}</b> down ${secs(e.dur_ms)} ${e.every_ms ? `every ${secs(e.every_ms)}` : "once"}
+      ${e.down ? '<span class="badge b-poor">down now</span>' : ""}<span class="muted">${when}</span>
+      <button data-unsched="${e.id}">remove</button></div>`;
+  }).join("");
+}
+
+let lastSpeedSent = null;
+$("sim-run").onclick = () => simStatus && simControl({ op: "pause", value: !simStatus.paused });
+$("sim-speed").oninput = () => {
+  const v = SPEEDS[$("sim-speed").value];
+  $("sim-speed-v").textContent = `×${v}`;
+  if (v !== lastSpeedSent) { lastSpeedSent = v; simControl({ op: "speed", value: v }); }
+};
+async function simStep() {
+  if (!simStatus) return;
+  if (!simStatus.paused) await simControl({ op: "pause", value: true });
+  await simControl({ op: "step", seconds: Number($("sim-step-size").value) });
+  setTimeout(refresh, 250);
+}
+$("sim-step").onclick = simStep;
+document.addEventListener("keydown", ev => {
+  if (ev.key !== "ArrowRight" || !simStatus || !transport || transport.kind !== "sim") return;
+  if (ev.target.closest("input, select, textarea, [role=tab]")) return;
+  ev.preventDefault();
+  simStep();
+});
+$("sim-loss").oninput = () => { $("sim-loss-v").textContent = `${$("sim-loss").value} %`; };
+$("sim-loss").onchange = async () => { await simControl({ op: "loss", value: Number($("sim-loss").value) }); refresh(); };
+for (const [id, key] of [["sim-cn", "node_pct"], ["sim-cl", "link_pct"]]) {
+  $(id).oninput = () => { $(id + "-v").textContent = `${$(id).value} %`; };
+  $(id).onchange = () => simControl({ op: "chaos", [key]: Number($(id).value) });
+}
+$("sim-cm").onchange = () => simControl({ op: "chaos", mean_s: Number($("sim-cm").value) || 60 });
+$("sim-cs").onchange = () => simControl({ op: "chaos", spare_attached: $("sim-cs").checked });
+$("sim-heal").onclick = async () => { await simControl({ op: "chaos", heal: true }); refresh(); };
+$("sim-sadd").onclick = async () => {
+  await simControl({ op: "sched_add", node: Number($("sim-sn").value), start_in_s: Number($("sim-ss").value) || 0,
+    dur_s: Number($("sim-sd").value) || 60, every_s: Number($("sim-se").value) || 0 });
+  refresh();
+};
+$("sim-sched-list").addEventListener("pointerdown", async ev => {  // pointerdown: the list is redrawn as its countdowns tick
+  const b = ev.target.closest("button[data-unsched]");
+  if (b) { await simControl({ op: "sched_remove", id: Number(b.dataset.unsched) }); refresh(); }
+});
+$("sim-restart").onclick = () => simControl({ op: "restart", topo: $("sim-rt").value,
+  nodes: Number($("sim-rn").value) || 8, seed: Number($("sim-rs").value) || 0 });
+async function attachTo(id) {
+  if (!transport || !st.sim || id === st.sim.attached) return;
+  const res = await command(`@attach ${id}`, false).catch(e => ({ ok: false, reason: e.message }));
+  if (res.ok) {
+    st = Object.assign(fresh(), { sim: { ...st.sim, attached: id }, sent: st.sent });
+    $("log").innerHTML = "";
+    log(`plugged into node ${id}`, "ev");
+    renderAll();
+  }
+  refresh();
+}
+$("simbar").addEventListener("click", async ev => {
+  const at = ev.target.closest("button[data-attach]");
+  if (at) { attachTo(Number(at.dataset.attach)); return; }
+  const b = ev.target.closest("button[data-sim]");
+  if (!b) return;
+  await command(b.dataset.sim, false).catch(() => {});
+  refresh();
+});
+async function simLink(verb) {
+  const a = $("cut-a").value, b = $("cut-b").value;
+  if (!a || !b) return;
+  const loss = verb === "@join" && simStatus ? ` ${simStatus.loss}` : "";
+  await command(`${verb} ${a} ${b}${loss}`, false).catch(() => {});
+  refresh();
+}
+$("btn-cut").onclick = () => simLink("@cut");
+$("btn-join").onclick = () => simLink("@join");
+
+/* Send form */
+$("f-type").onchange = () => { $("f-prio").disabled = $("f-type").value !== "text"; };
+$("send").addEventListener("submit", async ev => {
+  ev.preventDefault();
+  if (!transport) return;
+  const dest = $("f-dest").value, type = $("f-type").value, life = $("f-life").value;
+  let content = $("f-text").value.replace(/[\r\n]+/g, " ").trim();
+  if (!content) return;
+  if (type === "tel") content = content.replace(/\s+/g, "");
+  const line = type === "text" ? `send ${dest} ${$("f-prio").value} ${life} ${content}` : `${type} ${dest} ${life} ${content}`;
+  try {
+    const res = await command(line, false);
+    if (res.ok) {
+      const key = `${res.origin}:${res.id}`;
+      const m = st.sent.get(key) || { origin: res.origin, id: res.id, dest: Number(dest), state: "queued" };
+      m.content = content;
+      st.sent.set(key, m);
+      $("f-text").value = "";
+      renderSent();
+    } else {
+      log(`send refused: ${res.reason}`, "err");
+    }
+  } catch (e) { log(String(e.message || e), "err"); }
+});
+
+/* Console input */
+const HELP = [  // the line protocol of SPEC.md Section 11; "help" itself is answered by the page, not the node
+  ["id", "this node's identity and settings"],
+  ["nodes", "status reports heard from the network"],
+  ["links", "neighbors, with ETX, signal, and φ"],
+  ["routes", "the route table"],
+  ["msgs", "messages this node originated or holds"],
+  ["stats", "frame and delivery counters"],
+  ["status", "broadcast this node's status now"],
+  ["ping", "ask neighbors to answer with a HELLO"],
+  ["send <dest> <u|n|r> <lifetime_s> <text>", "send a text message (urgent, normal, routine)"],
+  ["cmd <dest> <lifetime_s> <text>", "send a command"],
+  ["tel <dest> <lifetime_s> <hex>", "send telemetry as hex"],
+  ["cancel <id>", "drop a message this node sent, if not yet transmitted"],
+];
+const SIM_HELP = [
+  ["@attach <node>", "plug into another node"],
+  ["@kill <node>, @revive <node>", "take a node down or bring it back"],
+  ["@cut <a> <b>, @join <a> <b> [loss]", "remove or restore a link"],
+];
+function showHelp() {
+  const rows = transport && transport.kind === "sim" ? [...HELP, ...SIM_HELP] : HELP;
+  const width = Math.max(...rows.map(([c]) => c.length));
+  log("Commands:", "help");
+  for (const [c, what] of rows) log(`  ${c.padEnd(width)}  ${what}`, "help");
+}
+$("cmd").addEventListener("keydown", async ev => {
+  if (ev.key !== "Enter") return;
+  const line = $("cmd").value.trim();
+  if (line.toLowerCase() === "help" || line === "?") { $("cmd").value = ""; showHelp(); return; }
+  if (!line || !transport) return;
+  $("cmd").value = "";
+  try {
+    const res = await command(line, false);
+    if (res.ok && /^(send|cmd|tel) /.test(line)) {
+      const m = st.sent.get(`${res.origin}:${res.id}`);
+      if (m) { m.content = line.split(" ").slice(line.startsWith("send") ? 4 : 3).join(" "); renderSent(); }
+    }
+  } catch (e) { log(String(e.message || e), "err"); }
+});
+$("btn-clear").onclick = () => { $("log").innerHTML = ""; };
+$("btn-ping").onclick = sendPing;
+
+/* Transports */
+function setConnected(kind) {
+  const on = !!kind;
+  $("conn").classList.toggle("on", on);
+  $("conn-text").textContent = kind === "usb" ? "USB serial" : kind === "sim" ? "Simulator" : "Not connected";
+  $("btn-usb").hidden = on;
+  $("btn-sim").hidden = on || !simAvailable;
+  $("btn-close").hidden = !on;
+}
+
+async function connected(t) {
+  transport = t;
+  st = fresh();
+  simIds = new Set();
+  if (t.kind === "sim") st.sim = { alive: null, links: [] };
+  $("log").innerHTML = "";
+  $("banner").style.display = "none";
+  setConnected(t.kind);
+  log(`connected (${t.kind === "usb" ? "USB serial, 115200 baud" : "simulator"})`, "ev");
+  start();
+}
+
+function disconnected(reason) {
+  if (!transport) return;
+  transport = null;
+  dropQueue();
+  setConnected(null);
+  log(reason || "disconnected", "err");
+  renderAll();
+}
+
+async function connectUsb() {
+  if (!("serial" in navigator)) {
+    showBanner("This browser has no Web Serial. Use Chrome or Edge, and open the page from http://localhost (run serve.py).");
+    return;
+  }
+  let port;
+  try { port = await navigator.serial.requestPort(); } catch { return; }
+  try { await port.open({ baudRate: 115200 }); } catch (e) {
+    showBanner(`Could not open the port: ${e.message}. Close any other serial monitor (PlatformIO, PuTTY) using it.`);
+    return;
+  }
+  const encoder = new TextEncoder();
+  const writer = port.writable.getWriter();
+  let reader = null, closing = false;
+  const t = {
+    kind: "usb",
+    send: line => writer.write(encoder.encode(line + "\n")),
+    close: async () => {
+      closing = true;
+      try { await reader?.cancel(); } catch {}
+      await loop;
+      try { writer.releaseLock(); } catch {}
+      try { await port.close(); } catch {}
+      disconnected("disconnected");
+    },
+  };
+  const loop = (async () => {
+    const dec = new TextDecoder();
+    let buf = "";
+    while (port.readable && !closing) {
+      reader = port.readable.getReader();
+      try {
+        for (;;) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let i;
+          while ((i = buf.indexOf("\n")) >= 0) {
+            const line = buf.slice(0, i).replace(/\r$/, "");
+            buf = buf.slice(i + 1);
+            if (line) onLine(line);
+          }
+          if (buf.length > 4096) buf = "";
+        }
+      } catch (e) {
+        if (!closing) log(`serial: ${e.message}`, "err");
+      } finally {
+        reader.releaseLock();
+      }
+    }
+    if (!closing) disconnected("USB disconnected");
+  })();
+  connected(t);
+}
+
+let simAvailable = false;
+function connectSim() {
+  const src = new EventSource("/sim/events");
+  const t = {
+    kind: "sim",
+    send: line => fetch("/sim/send", { method: "POST", body: line }).then(r => { if (!r.ok) throw new Error("bridge refused"); }),
+    close: async () => { src.close(); disconnected("disconnected"); },
+  };
+  src.onmessage = e => onLine(e.data);
+  src.addEventListener("sim", e => onSimStatus(JSON.parse(e.data)));
+  src.onerror = () => { if (src.readyState === EventSource.CLOSED) disconnected("simulator bridge closed"); };
+  src.onopen = () => { if (transport !== t) connected(t); };
+}
+
+$("btn-usb").onclick = connectUsb;
+$("btn-sim").onclick = connectSim;
+$("btn-close").onclick = () => transport && transport.close();
+
+(async () => {
+  try {
+    const r = await fetch("/sim/info");
+    if (r.ok) {
+      const info = await r.json();
+      simAvailable = true;
+      speed = info.paused ? 0 : info.speed || 1;
+      simStatus = info;
+    }
+  } catch {}
+  setConnected(null);
+  renderAll();
+  try {
+    const saved = $(localStorage.getItem("lunar-mesh-tab"));
+    if (saved && tabs.includes(saved)) saved.hidden ? (restoreSim = true) : selectTab(saved);
+  } catch {}
+  if (simAvailable && new URLSearchParams(location.search).has("sim")) connectSim();
+})();
+</script>
+<script src="dashboard.js"></script>
+</body>
+</html>

@@ -8,6 +8,7 @@ Node software for the Resilient Lunar Surface Communications Network capstone: a
 |---|---|
 | [SPEC.md](SPEC.md) | Requirements, system model, architecture, wire formats, state machines, port interface, parameters, traceability. |
 | [PLAN.md](PLAN.md) | Ground rules, phases with exit criteria, test strategy, simulator scenarios, target build, open items. |
+| [interface/README.md](interface/README.md) | The browser interface: use with a board or the simulator, panels, techniques. |
 
 ## Layout
 
@@ -23,6 +24,7 @@ mesh-network/
     include/lmesh/      public headers, included by the platform and the application
     src/                library modules, one per protocol concern
   sim/                host simulator: virtual clock and medium, scenario runner
+  interface/          browser page for a plugged-in node, and its simulator bridge (serve.py)
   tests/unit/         host unit tests
   CMakeLists.txt      host build: library, simulator, tests
 ```
@@ -33,7 +35,7 @@ The folder is a PlatformIO project: `src/` is the firmware and `lib/lmesh/` is t
 
 | File | Contents |
 |---|---|
-| `lmesh.h` | The API: init, tick, next wake time, radio receive and transmit-done entry points, send and cancel, queries for the interface, the line protocol. |
+| `lmesh.h` | The API: init, tick, next wake time, radio receive and transmit-done entry points, send and cancel, HELLO ping, queries for the interface, the line protocol. |
 | `lmesh_config.h` | Compile-time parameters with defaults, each overridable by a `-D` flag. |
 | `lmesh_types.h` | Node identifiers, error codes, priorities, message types and states, events, query rows, counters, identity. |
 | `lmesh_port.h` | The platform port: clock, random, radio send, channel busy, airtime estimate, battery, health, storage. The application callbacks: events and command execution. |
@@ -47,8 +49,8 @@ The folder is a PlatformIO project: `src/` is the firmware and `lib/lmesh/` is t
 | `aes.c` | link | AES-128 forward cipher used by the CMAC tag. |
 | `link.c` | link | Transmit queue with due times and priority bands, one frame in flight, hop acknowledgments with status codes, retries with airtime-scaled backoff, repeat detection, link failure counting. |
 | `flood.c` | link | Controlled flood for status and route requests: duplicate cache keyed by origin and sequence, hop limit, random rebroadcast delay. |
-| `neighbor.c` | routing | Neighbor table: liveness from missed HELLOs and failed unicasts, restart detection, HELLO loss bitmap, bidirectional ETX. |
-| `hello.c` | routing | HELLO encode and decode, periodic and triggered sends, pagination of the route list, replacement of a neighbor's route vector. |
+| `neighbor.c` | routing | Neighbor table: φ accrual liveness from HELLO arrival intervals, failed unicasts, restart detection, HELLO loss bitmap, bidirectional ETX. |
+| `hello.c` | routing | HELLO encode and decode, periodic, triggered and ping sends, pagination of the route list, replacement of a neighbor's route vector. |
 | `route.c` | routing | Route table: feasibility condition, selection with hysteresis, retraction, expiry, sequence-number requests. |
 | `store.c` | message | Fixed message store: checksummed records, lifetime countdown, eviction order, message-id counter. |
 | `message.c` | message | Submit, forward, deliver; custody transfer; receipts; origin re-send; message states and events; weighted round-robin scheduler. |
@@ -87,7 +89,7 @@ The folder is a PlatformIO project: `src/` is the firmware and `lib/lmesh/` is t
 | `sim/sim_check.c` | Observation and checks: event and frame capture, convergence tracking, route-graph loop walk, per-hop metric identity, metrics and CSV output. |
 | `sim/sim_msg.c` | Message tracking: per-message state history, exactly-once delivery, one terminal state per message, hop-count bound, store-record disappearance audit. |
 | `sim/sim_scenarios.c` | Scenarios S1 to S14 of PLAN.md Section 5 plus S12L. |
-| `sim/sim_console.c` | `lmesh_console [line\|ring\|diamond\|random] [nodes] [seed] [loss_pct]`: a simulated network with one node's line protocol on stdin and stdout, advanced by `@t <ms>` lines; `@kill`, `@revive`, `@cut`, `@join`, `@attach`, `@topo` control it. Drives `../interface` without boards. |
+| `sim/sim_console.c` | `lmesh_console [line\|ring\|diamond\|random] [nodes] [seed] [loss_pct]`: a simulated network with one node's line protocol on stdin and stdout, advanced by `@t <ms>` lines; `@kill`, `@revive`, `@cut`, `@join`, `@attach`, `@topo` control it. Drives `interface/` without boards. |
 | `sim/sim_main.c` | Runner: `lmesh_sim <scenario> [seed] [csv]`, `lmesh_sim sweep <scenario> <seeds> [--known file]`, `lmesh_sim regress <file>`; `-v` prints every node's event stream. |
 | `sim/regression_seeds.txt` | Seeds that once failed, one `<scenario> <seed>` per line; `regress` re-runs them and `sweep --known` skips them. Empty when everything passes. |
 | `sim/results/` | Sweep output: one CSV row per run and one per message for the S9 and S11 sweeps. |
@@ -119,7 +121,7 @@ ctest --test-dir build --output-on-failure
 ./build/lmesh_sim sweep S6 200
 ```
 
-The browser interface for a node is in `../interface`; `python ../interface/serve.py --sim` runs it against `lmesh_console`.
+The browser interface for a node is in `interface/`; `python interface/serve.py --sim` runs it against `lmesh_console`.
 
 CTest runs the unit tests, seed 1 of every scenario, and 20-seed sweeps of S3, S6, S9 and S11. The build defaults to Release; a sweep of 200 seeds takes seconds.
 

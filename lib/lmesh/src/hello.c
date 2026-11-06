@@ -1,4 +1,5 @@
-/* HELLO transmission and reception: periodic and triggered sends, route-list pagination, decoding, vector replacement. */
+/* HELLO transmission and reception: periodic, triggered, and ping sends, route-list pagination, decoding, vector
+ * replacement. */
 #include "hello.h"
 #include "link.h"
 #include "neighbor.h"
@@ -93,14 +94,15 @@ size_t lmesh_hello_encode(lmesh_node *node, uint8_t *out, size_t out_max)
     return encode(node, out, out_max, 0);
 }
 
-static void send_hello(lmesh_node *node, uint8_t flags)
+static lmesh_err send_hello(lmesh_node *node, uint8_t flags)
 {
     uint8_t buf[LMESH_MAX_PAYLOAD];
     size_t len = encode(node, buf, sizeof buf, flags);
-    if (len > 0) {
-        (void)lmesh_link_send(node, LMESH_FT_HELLO, LMESH_ID_ALL, buf, len, LMESH_PRIO_NORMAL, node->now_ms, false,
-                              LMESH_OWNER_HELLO, 0);
+    if (len == 0) {
+        return LMESH_ERR_TOO_LONG;
     }
+    return lmesh_link_send(node, LMESH_FT_HELLO, LMESH_ID_ALL, buf, len, LMESH_PRIO_NORMAL, node->now_ms, false,
+                           LMESH_OWNER_HELLO, 0);
 }
 
 void lmesh_hello_init(lmesh_node *node)
@@ -110,6 +112,7 @@ void lmesh_hello_init(lmesh_node *node)
     h->page = 0;
     h->next_ms = node->now_ms + lmesh_rand_range(node, 0, LMESH_HELLO_PERIOD_MS);
     h->last_triggered_ms = node->now_ms - LMESH_TRIGGER_MIN_GAP_MS;
+    h->last_ping_ms = node->now_ms - LMESH_TRIGGER_MIN_GAP_MS;
     lmesh_wake_at(node, h->next_ms);
 }
 
@@ -120,7 +123,8 @@ void lmesh_hello_tick(lmesh_node *node)
     bool triggered = h->trigger_pending && (periodic || lmesh_time_reached(node->now_ms, h->trigger_at_ms));
 
     if (periodic || triggered) {
-        send_hello(node, triggered ? (uint8_t)LMESH_HELLO_TRIGGERED : 0u);
+        uint8_t flags = (uint8_t)((periodic ? LMESH_HELLO_PERIODIC : 0u) | (triggered ? LMESH_HELLO_TRIGGERED : 0u));
+        (void)send_hello(node, flags);
     }
     if (triggered) {
         h->trigger_pending = false;
@@ -152,6 +156,24 @@ void lmesh_hello_trigger(lmesh_node *node)
         h->trigger_at_ms = at;
     }
     lmesh_wake_at(node, h->trigger_at_ms);
+}
+
+/* An on-demand HELLO, sent at once, that asks every neighbor hearing it to answer with a triggered HELLO. It refreshes
+ * this node's entry at its neighbors like any HELLO but is not a periodic sample for their phi estimate. */
+lmesh_err lmesh_hello_ping(lmesh_node *node)
+{
+    if (!node) {
+        return LMESH_ERR_ARG;
+    }
+    lmesh_hello_state *h = &node->hello;
+    if (!lmesh_time_reached(node->now_ms, h->last_ping_ms + LMESH_TRIGGER_MIN_GAP_MS)) {
+        return LMESH_ERR_STATE;
+    }
+    lmesh_err err = send_hello(node, LMESH_HELLO_PING);
+    if (err == LMESH_OK) {
+        h->last_ping_ms = node->now_ms;
+    }
+    return err;
 }
 
 static bool well_formed(const uint8_t *p, size_t len)
@@ -225,6 +247,10 @@ void lmesh_hello_rx(lmesh_node *node, const lmesh_frame_hdr *hdr, const uint8_t 
     uint16_t their_seqno = lmesh_get16(payload + 1);
     bool replaced = lmesh_neighbor_restart_check(node, n, payload[0], their_seqno);
     lmesh_neighbor_hello_seen(node, n, payload[0], listed_us, their_quality);
+    lmesh_neighbor_hello_timing(node, n, (payload[3] & LMESH_HELLO_PERIODIC) != 0);
+    if (payload[3] & LMESH_HELLO_PING) {
+        lmesh_hello_trigger(node);
+    }
     lmesh_route_update(node, n, tx, their_seqno, 0);
 
     size_t m = *p++;

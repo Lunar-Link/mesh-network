@@ -530,6 +530,8 @@ static const char *const names[M_COUNT] = {
     [M_EVICTED_ROUTINE] = "evicted_routine",
     [M_EVICTED_NORMAL] = "evicted_normal",
     [M_EVICTED_URGENT] = "evicted_urgent",
+    [M_FALSE_DOWNS] = "false_downs",
+    [M_DETECT_MS] = "detect_ms",
 };
 
 static const sim_metric_id summary_ids[] = {
@@ -539,7 +541,7 @@ static const sim_metric_id summary_ids[] = {
     M_LATENCY_MEAN_MS, M_LATENCY_P95_MS, M_LATENCY_MAX_MS, M_RX_LATENCY_MEAN_MS, M_RX_LATENCY_MAX_MS, M_DUPLICATES,
     M_STORE_DEPTH_MAX, M_RECEIPTS_SENT, M_DATA_RETRIES, M_RESEND_FRAMES, M_EVICTIONS, M_LOAD, M_HANDOVERS,
     M_CMD_EXECUTIONS, M_HOLD_DATA_FRAMES, M_EXPIRE_AFTER_MS, M_HEAL_FIRST_MS, M_HEAL_LAST_MS, M_KILL_TO_DELIVERY_MS,
-    M_REFUSED_SUBMITS, M_EVICTED_ROUTINE, M_EVICTED_NORMAL, M_EVICTED_URGENT, M_STORE_UNEXPLAINED};
+    M_REFUSED_SUBMITS, M_EVICTED_ROUTINE, M_EVICTED_NORMAL, M_EVICTED_URGENT, M_STORE_UNEXPLAINED, M_FALSE_DOWNS, M_DETECT_MS};
 
 const char *metric_name(sim_metric_id id)
 {

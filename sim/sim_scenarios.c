@@ -1,4 +1,4 @@
-/* Simulator scenarios S1-S14 from PLAN.md Section 5, plus the smoke run. */
+/* Simulator scenarios S1-S15 from PLAN.md Section 5, plus the smoke run. */
 #include "sim_scenarios.h"
 
 #include <string.h>
@@ -1529,11 +1529,82 @@ static void scen_s14(sim_run *r)
     }
 }
 
+/* S15: HELLO liveness on lossy links. A line of four nodes with S15_LOSS_PCT loss each way and no data traffic, so
+ * every neighbor-down comes from the liveness detector alone. Over S15_RUN_MS every down is false; then the end node
+ * is killed and the time until its neighbor declares it down is measured. */
+#define S15_NODES 4
+#ifndef S15_LOSS_PCT
+#define S15_LOSS_PCT 30u
+#endif
+#define S15_RUN_MS 7200000u
+#define S15_DETECT_BOUND_MS 180000u
+
+static uint32_t neighbor_downs(const sim_run *r)
+{
+    uint32_t c = 0;
+    for (int i = 0; i < S15_NODES; i++) {
+        c += r->obs.events[i][LMESH_EV_NEIGHBOR_DOWN];
+    }
+    return c;
+}
+
+static void scen_s15(sim_run *r)
+{
+    sim_topo t;
+    topo_line(&t, S15_NODES);
+    build(r, &t);
+    topo_apply(&r->net, &t, S15_LOSS_PCT);
+
+    bool up = false;
+    while (!up && r->net.now_ms < 10u * DISCOVERY_BOUND_MS) {
+        sim_step(&r->net, SAMPLE_MS);
+        up = true;
+        for (int i = 0; i + 1 < S15_NODES; i++) {
+            up = up && usable_pair(&r->net, i, i + 1) && usable_pair(&r->net, i + 1, i);
+        }
+    }
+    if (!up) {
+        metrics_fail(&r->m, "line not discovered within %lu ms", (unsigned long)r->net.now_ms);
+        return;
+    }
+    metric_set(&r->m, M_DISCOVERY_MS, r->net.now_ms);
+
+    uint32_t downs0 = neighbor_downs(r);
+    uint32_t t0 = r->net.now_ms;
+    while (r->net.now_ms - t0 < S15_RUN_MS) {
+        sim_step(&r->net, SAMPLE_MS);
+    }
+    metric_set(&r->m, M_FALSE_DOWNS, neighbor_downs(r) - downs0);
+
+    const int victim = S15_NODES - 1;
+    const int watcher = S15_NODES - 2;
+    lmesh_neighbor_info info;
+    uint32_t tw = r->net.now_ms;
+    while (!(neighbor_get(&r->net, watcher, victim, &info) && info.up) && r->net.now_ms - tw < S15_DETECT_BOUND_MS) {
+        sim_step(&r->net, FINE_SAMPLE_MS);
+    }
+    uint32_t tk = r->net.now_ms;
+    sim_kill(&r->net, victim);
+    while (neighbor_get(&r->net, watcher, victim, &info) && info.up && r->net.now_ms - tk < 2u * S15_DETECT_BOUND_MS) {
+        sim_step(&r->net, FINE_SAMPLE_MS);
+    }
+    bool detected = neighbor_get(&r->net, watcher, victim, &info) && !info.up;
+    if (!detected) {
+        metrics_fail(&r->m, "killed node still up at its neighbor after %lu ms", (unsigned long)(r->net.now_ms - tk));
+        return;
+    }
+    metric_set(&r->m, M_DETECT_MS, r->net.now_ms - tk);
+    if (r->net.now_ms - tk > S15_DETECT_BOUND_MS) {
+        metrics_fail(&r->m, "kill detected after %lu ms, bound %lu ms", (unsigned long)(r->net.now_ms - tk),
+                     (unsigned long)S15_DETECT_BOUND_MS);
+    }
+}
+
 static const sim_scenario scenarios[] = {
     {"smoke", scen_smoke}, {"S1", scen_s1},   {"S2", scen_s2},   {"S3", scen_s3},   {"S4", scen_s4},
     {"S5", scen_s5},       {"S6", scen_s6},   {"S7", scen_s7},   {"S8", scen_s8},   {"S9", scen_s9},
     {"S10", scen_s10},     {"S11", scen_s11}, {"S12", scen_s12}, {"S13", scen_s13}, {"S14", scen_s14},
-    {"S12L", scen_s12_line},
+    {"S12L", scen_s12_line}, {"S15", scen_s15},
 };
 
 const sim_scenario *sim_find_scenario(const char *name)

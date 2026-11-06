@@ -6,7 +6,9 @@
 
 enum lmesh_hello_flag {
     LMESH_HELLO_TRIGGERED = 0x01,
-    LMESH_HELLO_MORE = 0x02
+    LMESH_HELLO_MORE = 0x02,
+    LMESH_HELLO_PERIODIC = 0x04,
+    LMESH_HELLO_PING = 0x08
 };
 
 void lmesh_hello_init(lmesh_node *node);

@@ -1,6 +1,6 @@
 # Lunar Mesh Network: Specification
 
-*Revision 2, 26 October 2026 (Revision 1 earlier the same day). A starting point; expect revisions as the simulator and bench results come in. Revision 2 folds in the decisions made while implementing the message layer and the first simulator scenarios; each is marked "(Rev. 2)" where it applies.*
+*Revision 2, 26 October 2026 (Revision 1 earlier the same day). A starting point; expect revisions as the simulator and bench results come in. Revision 2 folds in the decisions made while implementing the message layer and the first simulator scenarios; each is marked "(Rev. 2)" where it applies. Revision 3 (5 November 2026) replaces the fixed HELLO miss limit with φ accrual liveness and adds the ping HELLO; marked "(Rev. 3)".*
 
 This document specifies the node software for the Resilient Lunar Surface Communications Network: the protocol every node runs, the formats on the wire, the behavior the interface sees, and the interface between the protocol and the platform it runs on. It is written from the capstone brief (Section 2) and is independent of the radio and the microcontroller.
 
@@ -221,13 +221,13 @@ Serves R1, R4, U2, U3.
 
 ### 7.1 HELLO
 
-Every node broadcasts a `HELLO` every `LMESH_HELLO_PERIOD_MS` (default 10 s) with ±20 % jitter, and additionally as a triggered update (Section 8.5).
+Every node broadcasts a `HELLO` every `LMESH_HELLO_PERIOD_MS` (default 10 s) with ±20 % jitter, additionally as a triggered update (Section 8.5), and on request as a ping (Rev. 3, below).
 
 | Offset | Size | Field |
 |---|---|---|
 | 0 | 1 | HELLO sequence, per node, wraps |
 | 1 | 2 | Sender's own route sequence number (Section 8.2) |
-| 3 | 1 | Flags: bit 0 `TRIGGERED`, bit 1 `MORE`: the route list continues in the next HELLO |
+| 3 | 1 | Flags: bit 0 `TRIGGERED`, bit 1 `MORE`: the route list continues in the next HELLO, bit 2 `PERIODIC`: sent on the periodic schedule (Rev. 3), bit 3 `PING`: answer with a triggered HELLO (Rev. 3) |
 | 4 | 1 | Neighbor count n |
 | 5 | 2n | n × (neighbor id, reception quality 0–255) |
 | 5 + 2n | 1 | Route count m |
@@ -236,6 +236,8 @@ Every node broadcasts a `HELLO` every `LMESH_HELLO_PERIOD_MS` (default 10 s) wit
 Reception quality is the fraction of that neighbor's recent HELLOs this node has heard, scaled to 255. Listing a neighbor tells it that the link is bidirectional and how well it is heard; this is the "I heard you" of Babel and the reverse-direction term of ETX. The metric encoding is Section 8.1.
 
 When the full route list does not fit in one frame, the sender rotates through it across consecutive HELLOs and sets `MORE` on all but the last page. With 16 nodes the whole list fits in one default frame.
+
+**Periodic flag and ping (Rev. 3).** `PERIODIC` marks the HELLO sent by the periodic timer, including one that also carries a due triggered update, so receivers can time the periodic schedule without counting triggered sends (Section 7.3). `lmesh_hello_ping()` sends a complete HELLO at once with `PING` set and neither of the other timing flags; it does not move the periodic timer, and a second ping within `LMESH_TRIGGER_MIN_GAP_MS` is refused with `LMESH_ERR_STATE`. A node hearing a ping schedules a triggered HELLO, subject to the usual trigger delay and rate limit, so within about `LMESH_TRIGGER_DELAY_MS` every neighbor in range has refreshed its entry at the pinging node.
 
 ### 7.2 Neighbor table
 
@@ -246,13 +248,23 @@ One entry per neighbor heard, up to `LMESH_MAX_NEIGHBORS` (default 16):
 - the neighbor's own route sequence number from its last HELLO (Rev. 2, used for restart detection);
 - last signal quality from the platform (RSSI, SNR), for the interface and for characterization;
 - consecutive hop-acknowledgment failures;
+- the last `LMESH_PHI_WINDOW` (default 16) intervals between periodic HELLOs, their mean and standard deviation, and the silence limit derived from them (Rev. 3);
 - the neighbor's advertised route list (Section 8.3).
 
 A neighbor is **usable** for routing only once it has listed us in a HELLO, so a one-way link is never used.
 
 ### 7.3 Liveness
 
-A neighbor is declared **down** when either no HELLO arrives for `LMESH_HELLO_MISS_LIMIT` (default 3) periods plus the jitter margin, or `LMESH_LINK_FAIL_LIMIT` consecutive unicast attempts to it fail. Declaring a neighbor down retracts every route through it (Section 8.4), raises a `neighbor down` event, and schedules a triggered HELLO. A HELLO from a down neighbor brings it back **up** at once, with its ETX window reset to a pessimistic start, and raises `neighbor up`.
+A neighbor is declared **down** when either its suspicion level φ reaches `LMESH_PHI_THRESHOLD` (Rev. 3, below), or `LMESH_LINK_FAIL_LIMIT` consecutive unicast attempts to it fail. Declaring a neighbor down retracts every route through it (Section 8.4), raises a `neighbor down` event, and schedules a triggered HELLO. A HELLO from a down neighbor brings it back **up** at once, with its ETX window reset to a pessimistic start and its interval history cleared, and raises `neighbor up`.
+
+**φ accrual (Rev. 3).** Rev. 2 declared a neighbor down after a fixed silence of `LMESH_HELLO_MISS_LIMIT` periods plus jitter (36 s). On a lossy link that fires on every run of three lost HELLOs, which at 30 % loss is several times an hour per link; on a clean link the same silence is strong evidence. The φ accrual detector (Hayashibara et al., 2004) replaces the fixed silence with one learned per neighbor, with no extra frames:
+
+- Each periodic HELLO received from an up neighbor adds the time since the previous periodic HELLO from it to a ring of the last `LMESH_PHI_WINDOW` intervals. Lost HELLOs show as long intervals, so the ring captures both jitter and loss. Triggered and ping HELLOs refresh the time last heard but add no interval.
+- From the ring, mean μ and standard deviation σ; σ is floored at `LMESH_PHI_MIN_SD_MS` (default half a period), because sixteen samples cannot show rare losses. With an empty ring μ is the HELLO period.
+- With t the time since any HELLO from the neighbor, φ(t) = −log10 P(next periodic HELLO later than t), using a normal distribution N(μ + `LMESH_PHI_PAUSE_MS`, σ²) and the logistic approximation of its tail: y = (t − μ − pause)/σ, z = y (1.5976 + 0.070566 y²), φ = log10(1 + e^z). φ = 1 means a 10 % chance the neighbor is still alive and merely late, φ = 2 a 1 % chance, and so on.
+- The arithmetic is integer (y and z in Q10, φ in hundredths, a 33-entry table for the tail term). φ is monotonic in t, so the time at which it reaches the threshold is computed once per interval sample as μ + pause + y*σ, where y* solves φ(y*) = threshold; the tick compares against that deadline as before.
+
+With the defaults (threshold 8.00, σ floor 5 s, no pause) a neighbor with a regular schedule is declared down after 36.1 s of silence, the same as Rev. 2, and a lossy neighbor later: S15 (PLAN.md Section 5) measures the trade. Building with `LMESH_PHI_ACCRUAL` 0 restores the Rev. 2 rule; φ is still computed and reported. The interface reads φ, μ and σ per neighbor from `lmesh_neighbors()` (`phi100`, `hello_interval_ms`, `hello_sd_ms`).
 
 **Restart detection (Rev. 2).** A neighbor that reboots faster than the miss limit detects (a brown-out or watchdog reset) comes back with empty tables, while its neighbors still hold its old route vector; without detection a transient loop forms until the vector expires. A HELLO from an up neighbor is treated as a restart when its HELLO sequence went backward by 3 to 128 (a gap of 1 or 2 is tolerated, and wraparound is ordinary forward progress), or when its own route sequence number changed and the HELLO sequence is not continuous (gap outside 1 to `LMESH_ETX_WINDOW`). A restart runs the neighbor-down path (vector cleared, routes re-selected, link state reset, `neighbor down`) and then the neighbor-up path (`neighbor up`, pessimistic ETX). An own-sequence-number change with a continuous HELLO sequence is a `ROUTE_REQ` bump (Section 8.6), not a restart: the vector is replaced by the HELLO's list without resetting the link.
 
@@ -432,17 +444,18 @@ One command per line, space-separated fields, text to the end of the line.
 
 | Command | Effect |
 |---|---|
-| `id` | Print this node's identity. |
+| `id` | Print this node's identity, with the φ down threshold `phi_down` and `phi_pause_ms` so the interface can compute φ between polls (Rev. 3). |
 | `send <dest> <prio> <lifetime_s> <text>` | Submit a `TEXT` message. `prio` is `u`, `n`, or `r`. |
 | `cmd <dest> <lifetime_s> <text>` | Submit a `COMMAND` at `NORMAL` priority. |
 | `tel <dest> <lifetime_s> <hex>` | Submit `TELEMETRY` with hex-encoded content. |
 | `cancel <id>` | Drop a message this node originated, if not yet transmitted. |
 | `nodes` | Dump the node table. |
-| `links` | Dump the neighbor table with ETX, RSSI, SNR, state. |
+| `links` | Dump the neighbor table with ETX, RSSI, SNR, state, and per neighbor (Rev. 3) `phi` (φ now), `hello_at_ms` (last HELLO, node clock), `hello_ms` and `hello_sd_ms` (mean and deviation of its periodic HELLO interval). |
 | `routes` | Dump the route table. |
 | `msgs` | Dump every message this node originated or holds, with state. |
 | `stats` | Dump counters: frames sent and received by type, tag failures, acknowledgment timeouts, duplicates, ids accepted outside the dedup window, evictions, expiries, airtime. |
 | `status` | Send a status broadcast now. |
+| `ping` | Send a ping HELLO now; neighbors answer with a triggered HELLO (Section 7.1, Rev. 3). Fails with `too_soon` within `LMESH_TRIGGER_MIN_GAP_MS` of the last ping. |
 
 Every command is answered by one JSON line with `"ok":true` or `"ok":false` and a reason. Dumps are answered by one JSON line per row followed by `{"end":"<command>"}`.
 
@@ -492,6 +505,7 @@ The protocol is a library with no operating-system or hardware dependency. The p
 | `lmesh_radio_rx(node, frame, len, rssi, snr)` | For every received frame. |
 | `lmesh_radio_tx_done(node, ok)` | When a transmission finishes. |
 | `lmesh_send(...)`, `lmesh_cancel(...)` | From the application or the interface. |
+| `lmesh_hello_ping(node)` | From the interface: send a ping HELLO now (Section 7.1, Rev. 3). |
 | `lmesh_neighbors()`, `lmesh_routes()`, `lmesh_messages()`, `lmesh_nodes()`, `lmesh_stats()` | Queries for the interface. |
 | `lmesh_host_command(node, line, out, max)`, `lmesh_host_format_event(ev, out, max)` | The line protocol, if the platform uses it. |
 
@@ -523,7 +537,12 @@ Compile-time constants in `lmesh_config.h`; each can be overridden with a `-D` f
 | `LMESH_ROUTE_REQ_HOPS` | `LMESH_MAX_NODES` | Initial hop limit for `ROUTE_REQ` floods (Rev. 2). |
 | `LMESH_FLOOD_CACHE` | 32 | (origin, sequence) pairs. |
 | `LMESH_HELLO_PERIOD_MS` | 10000 | ±20 % jitter. |
-| `LMESH_HELLO_MISS_LIMIT` | 3 | Missed periods before a neighbor is down. |
+| `LMESH_HELLO_MISS_LIMIT` | 3 | Missed periods before a neighbor is down, when `LMESH_PHI_ACCRUAL` is 0. |
+| `LMESH_PHI_ACCRUAL` | 1 | φ accrual liveness (Rev. 3); 0 for the fixed miss limit. |
+| `LMESH_PHI_WINDOW` | 16 | Periodic HELLO intervals per neighbor. |
+| `LMESH_PHI_THRESHOLD` | 800 | φ in hundredths at which a neighbor is down. |
+| `LMESH_PHI_MIN_SD_MS` | `LMESH_HELLO_PERIOD_MS` / 2 | Floor on the interval standard deviation. |
+| `LMESH_PHI_PAUSE_MS` | 0 | Added to the mean interval before φ is computed. |
 | `LMESH_ETX_WINDOW` | 16 | HELLOs in the loss estimate. |
 | `LMESH_ROUTE_HOLD_MS` | 35000 | Advertisement expiry. |
 | `LMESH_ROUTE_HYSTERESIS` | 4 | 0.5 ETX, in 1/8 units. |
@@ -562,6 +581,7 @@ Estimate with the defaults, 16 nodes, 16 neighbors, 64 records, 120-byte frames.
 | Structure | Size |
 |---|---|
 | Neighbor table, 16 × about 24 B | 0.4 kB |
+| HELLO interval rings, 16 neighbors × 16 × 4 B, and φ state (Rev. 3) | 1.3 kB |
 | Advertised vectors, 16 neighbors × 16 destinations × 4 B | 1.0 kB |
 | Route table, 16 × about 16 B | 0.3 kB |
 | Message store, 64 × about 128 B | 8.2 kB |
@@ -569,7 +589,7 @@ Estimate with the defaults, 16 nodes, 16 neighbors, 64 records, 120-byte frames.
 | Node table, 16 × about 48 B | 0.8 kB |
 | Transmit queue, 8 × about 128 B | 1.0 kB |
 | Flood cache, history ring, counters | 0.5 kB |
-| **Total** | **about 13 kB** |
+| **Total** | **about 14 kB** |
 
 This fits any candidate microcontroller with 64 kB or more of RAM alongside a platform layer. The store dominates and scales linearly with `LMESH_STORE_SIZE`.
 
@@ -625,6 +645,7 @@ Defined in outline here so that the baseline leaves room for them; not part of t
 - De Couto, D., Aguayo, D., Bicket, J., and Morris, R. (2003). "A High-Throughput Path Metric for Multi-Hop Wireless Routing." *MobiCom*. ETX.
 - Fall, K. (2003). "A Delay-Tolerant Network Architecture for Challenged Internets." *SIGCOMM*. Store-carry-forward with custody.
 - Burleigh, S., Fall, K., and Birrane, E. (2022). RFC 9171, "Bundle Protocol Version 7." Lifetime (Section 4.2.1) and bundle age without synchronized clocks (Section 4.4.2).
+- Hayashibara, N., Défago, X., Yared, R., and Katayama, T. (2004). "The φ Accrual Failure Detector." *SRDS*. Liveness as a suspicion level from heartbeat inter-arrival times (Section 7.3, Rev. 3). Bhayani, A., "Phi φ Accrual Failure Detection" (Medium), is a readable summary; the logistic approximation of the normal tail follows the Akka implementation.
 - Kent, S. (2005). RFC 4303, "IP Encapsulating Security Payload," Appendix A. Sliding-window duplicate detection.
 - Katevenis, M., Sidiropoulos, S., and Courcoubetis, C. (1991). "Weighted Round-Robin Cell Multiplexing in a General-Purpose ATM Switch Chip." *IEEE JSAC*. Weighted round-robin with a starvation bound.
 - Song, J. H., Poovendran, R., Lee, J., and Iwata, T. (2006). RFC 4493, "The AES-CMAC Algorithm." Frame authentication.

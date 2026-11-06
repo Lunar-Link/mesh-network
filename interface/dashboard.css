@@ -1,0 +1,27 @@
+.dashboard-toolbar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
+.dashboard-toolbar label { display: flex; align-items: center; gap: 6px; }
+.dashboard-toolbar .layout-hint { margin-right: auto; }
+#panel-overview.dashboard { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
+.dashboard-column { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 180px; }
+.dashboard-card { min-width: 0; }
+.dashboard-card > h2 { align-items: center; flex-wrap: wrap; }
+.dashboard-handle { cursor: grab; color: var(--muted); padding: 2px 4px; touch-action: none; }
+.dashboard-actions { display: flex; gap: 4px; margin-left: auto; }
+.dashboard-actions button { font-size: 12px; padding: 2px 7px; }
+.dashboard-card.is-minimized > :not(h2) { display: none !important; }
+.dashboard-card.is-minimized > h2 { margin-bottom: 0; }
+.dashboard-card.is-maximized { position: fixed; inset: 12px; z-index: 40; overflow: auto; box-shadow: 0 0 0 24px #0009; }
+.dashboard-card.is-maximized #map { height: min(65vh, 700px); }
+.dashboard-card > .tab-panel { grid-template-columns: minmax(0, 1fr); }
+.dashboard-card > .tab-panel > section { grid-column: 1; }
+.dashboard-card #simbar { margin: 0; }
+.dashboard-card #log { height: 320px; }
+.dashboard-card.is-maximized #log { height: 65vh; }
+.dashboard-card .simctl { grid-template-columns: 1fr; }
+.dashboard-card.is-maximized .simctl { grid-template-columns: 130px 1fr; }
+.dashboard-drop { border: 1px dashed var(--control-border); border-radius: 8px; padding: 12px; color: var(--muted); text-align: center; font-size: 12px; }
+.dashboard-drop.is-over { border-color: var(--accent); background: var(--node-self); color: var(--text); }
+body.dashboard-dragging .dashboard-drop { min-height: 64px; }
+.tabs button[draggable=true] { cursor: grab; }
+.tabs button[data-docked=true]::after { content: ' ↘'; color: var(--accent); }
+@media (max-width: 1000px) { #panel-overview.dashboard { grid-template-columns: minmax(0, 1fr); } }

@@ -83,6 +83,14 @@ typedef struct lmesh_neighbor {
     lmesh_adv adv[LMESH_MAX_NODES];
     bool own_seqno_valid;
     uint16_t own_seqno;
+    bool periodic_valid;
+    uint8_t phi_count;
+    uint8_t phi_next;
+    uint32_t last_periodic_ms;
+    uint32_t phi_mean_ms;
+    uint32_t phi_sd_ms;
+    uint32_t phi_limit_ms;
+    uint32_t phi_interval_ms[LMESH_PHI_WINDOW];
 } lmesh_neighbor;
 
 typedef struct lmesh_neighbor_state {
@@ -96,6 +104,7 @@ typedef struct lmesh_hello_state {
     uint32_t next_ms;
     uint32_t trigger_at_ms;
     uint32_t last_triggered_ms;
+    uint32_t last_ping_ms;
 } lmesh_hello_state;
 
 typedef struct lmesh_route {

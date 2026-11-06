@@ -94,10 +94,10 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     add_test(NAME test_rylr498 COMMAND test_rylr498)
 
     add_test(NAME sim_smoke COMMAND lmesh_sim smoke 1)
-    foreach(scenario S1 S2 S3 S4 S5 S6 S13 S7 S8 S9 S10 S11 S12 S14)
+    foreach(scenario S1 S2 S3 S4 S5 S6 S13 S7 S8 S9 S10 S11 S12 S14 S15)
         add_test(NAME sim_${scenario} COMMAND lmesh_sim ${scenario} 1)
     endforeach()
-    foreach(scenario S3 S6 S9 S11)
+    foreach(scenario S3 S6 S9 S11 S15)
         add_test(NAME sim_sweep_${scenario}
                  COMMAND lmesh_sim sweep ${scenario} 20 --known ${CMAKE_CURRENT_SOURCE_DIR}/sim/regression_seeds.txt)
     endforeach()

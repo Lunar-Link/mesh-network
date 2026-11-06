@@ -152,6 +152,10 @@ typedef struct lmesh_neighbor_info {
     int16_t rssi;
     int8_t snr;
     uint32_t last_heard_ms;
+    uint16_t phi100;
+    uint32_t last_hello_ms;
+    uint32_t hello_interval_ms;
+    uint32_t hello_sd_ms;
 } lmesh_neighbor_info;
 
 typedef struct lmesh_route_info {

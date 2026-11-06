@@ -18,6 +18,7 @@ lmesh_err lmesh_send(lmesh_node *node, lmesh_node_id dest, lmesh_msg_type type, 
                      const uint8_t *content, size_t len, lmesh_msg_ref *out);
 lmesh_err lmesh_cancel(lmesh_node *node, lmesh_msg_ref ref);
 lmesh_err lmesh_status_now(lmesh_node *node);
+lmesh_err lmesh_hello_ping(lmesh_node *node);
 
 size_t lmesh_neighbors(const lmesh_node *node, lmesh_neighbor_info *out, size_t max);
 size_t lmesh_routes(const lmesh_node *node, lmesh_route_info *out, size_t max);

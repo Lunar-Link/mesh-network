@@ -18,7 +18,6 @@ static int checks;
     } while (0)
 
 #define MAX_EVENTS 64
-#define DOWN_AFTER_MS (LMESH_HELLO_MISS_LIMIT * LMESH_HELLO_PERIOD_MS * (100 + LMESH_HELLO_JITTER_PCT) / 100)
 
 static uint32_t clock_ms;
 static uint32_t rnd_value = 4;
@@ -157,14 +156,16 @@ static void test_missed_hellos(void)
     lmesh_neighbor *n = lmesh_neighbor_touch(&node, 3, -70, 3);
     lmesh_neighbor_hello_seen(&node, n, 1, true, 255);
     uint32_t t = node.now_ms;
+    uint32_t limit = lmesh_neighbor_silence_limit_ms(n);
+    CHECK(limit > LMESH_HELLO_PERIOD_MS);
 
-    node.now_ms = t + DOWN_AFTER_MS - 1;
+    node.now_ms = t + limit - 1;
     node.next_wake_ms = node.now_ms + 1000000u;
     lmesh_neighbor_tick(&node);
     CHECK(n->up);
-    CHECK(node.next_wake_ms == t + DOWN_AFTER_MS);
+    CHECK(node.next_wake_ms == t + limit);
 
-    node.now_ms = t + DOWN_AFTER_MS;
+    node.now_ms = t + limit;
     lmesh_neighbor_tick(&node);
     CHECK(!n->up && !n->bidirectional);
     CHECK(n->etx8 == LMESH_METRIC_INF);
@@ -246,6 +247,116 @@ static void test_table_full(void)
     CHECK(r && !r->up && r->rssi == -50 && r->last_heard_ms == 2000);
 }
 
+static void test_phi_math(void)
+{
+    CHECK(lmesh_phi100(10000, 10000, 1000) == 30);
+    CHECK(lmesh_phi100(11000, 10000, 1000) == 80);
+    CHECK(lmesh_phi100(12000, 10000, 1000) == 164);
+    CHECK(lmesh_phi100(8000, 10000, 1000) == 1);
+    CHECK(lmesh_phi100(0, 10000, 1000) == 0);
+    CHECK(lmesh_phi100(4000000000u, 10000, 1000) == lmesh_phi100(4000000001u, 10000, 1000));
+    CHECK(lmesh_phi100(10000, 10000, 0) == 30);
+
+    uint16_t prev = 0;
+    for (uint32_t t = 0; t < 200000u; t += 37u) {
+        uint16_t phi = lmesh_phi100(t, 10000, 2000);
+        CHECK(phi >= prev);
+        prev = phi;
+    }
+    CHECK(prev > 10000);
+}
+
+static void periodic_hello(lmesh_neighbor *n, uint8_t *seq, uint32_t after_ms)
+{
+    node.now_ms += after_ms;
+    lmesh_neighbor_touch(&node, n->id, -70, 3);
+    lmesh_neighbor_hello_seen(&node, n, ++*seq, true, 255);
+    lmesh_neighbor_hello_timing(&node, n, true);
+}
+
+static uint16_t query_phi(lmesh_node_id id)
+{
+    lmesh_neighbor_info info[LMESH_MAX_NEIGHBORS];
+    size_t count = lmesh_neighbors(&node, info, LMESH_MAX_NEIGHBORS);
+    for (size_t i = 0; i < count; i++) {
+        if (info[i].id == id) {
+            return info[i].phi100;
+        }
+    }
+    return 0xFFFF;
+}
+
+static void test_phi_liveness(void)
+{
+    setup(1);
+    uint8_t seq = 0;
+    lmesh_neighbor *n = lmesh_neighbor_touch(&node, 5, -70, 3);
+    lmesh_neighbor_hello_seen(&node, n, ++seq, true, 255);
+    uint32_t boot_limit = lmesh_neighbor_silence_limit_ms(n);
+    CHECK(n->phi_count == 0 && n->phi_mean_ms == LMESH_HELLO_PERIOD_MS && n->phi_sd_ms == LMESH_PHI_MIN_SD_MS);
+    CHECK(lmesh_phi100(boot_limit, LMESH_HELLO_PERIOD_MS + LMESH_PHI_PAUSE_MS, LMESH_PHI_MIN_SD_MS) >=
+          LMESH_PHI_THRESHOLD);
+    CHECK(lmesh_phi100(boot_limit - 1, LMESH_HELLO_PERIOD_MS + LMESH_PHI_PAUSE_MS, LMESH_PHI_MIN_SD_MS) <
+          LMESH_PHI_THRESHOLD);
+
+    lmesh_neighbor_hello_timing(&node, n, true);
+    CHECK(n->phi_count == 0 && n->periodic_valid);
+
+    for (int i = 0; i < LMESH_PHI_WINDOW; i++) {
+        periodic_hello(n, &seq, i % 2 ? 9000u : 11000u);
+    }
+    CHECK(n->phi_count == LMESH_PHI_WINDOW && n->phi_mean_ms == 10000u);
+    CHECK(n->phi_sd_ms == LMESH_PHI_MIN_SD_MS);
+    CHECK(lmesh_neighbor_silence_limit_ms(n) == boot_limit);
+
+    uint32_t t = node.now_ms;
+    uint32_t mean_ms = 10000u;
+    CHECK(query_phi(5) == lmesh_phi100(0, mean_ms + LMESH_PHI_PAUSE_MS, LMESH_PHI_MIN_SD_MS));
+    node.now_ms = t + mean_ms + LMESH_PHI_PAUSE_MS;
+    CHECK(query_phi(5) == 30);
+    node.now_ms = t + boot_limit / 2u;
+    uint16_t mid = query_phi(5);
+    node.now_ms = t + boot_limit - 1u;
+    uint16_t late = query_phi(5);
+    CHECK(mid < late && late < LMESH_PHI_THRESHOLD);
+    node.now_ms = t;
+
+    node.now_ms += 3000u;
+    lmesh_neighbor_touch(&node, 5, -70, 3);
+    lmesh_neighbor_hello_seen(&node, n, ++seq, true, 255);
+    lmesh_neighbor_hello_timing(&node, n, false);
+    CHECK(n->phi_count == LMESH_PHI_WINDOW && n->phi_mean_ms == 10000u);
+    CHECK(query_phi(5) <= 1);
+
+    for (int i = 0; i < LMESH_PHI_WINDOW; i++) {
+        periodic_hello(n, &seq, (i % 4 == 0 ? 2u : 1u) * 10000u + (i % 3 == 0 ? 2000u : 0u) - 7000u * (i % 4 == 0));
+    }
+    CHECK(n->phi_sd_ms == LMESH_PHI_MIN_SD_MS);
+
+    for (int i = 0; i < LMESH_PHI_WINDOW; i++) {
+        periodic_hello(n, &seq, (i % 3 == 0 ? 3u : 1u) * 10000u);
+    }
+    CHECK(n->phi_mean_ms > 15000u && n->phi_sd_ms > LMESH_PHI_MIN_SD_MS);
+    uint32_t lossy_limit = lmesh_neighbor_silence_limit_ms(n);
+    CHECK(lossy_limit > boot_limit + 10000u);
+
+    t = node.now_ms;
+    node.now_ms = t + boot_limit + 5000u;
+    n_events = 0;
+    lmesh_neighbor_tick(&node);
+    CHECK(n->up && n_events == 0);
+    node.now_ms = t + lossy_limit;
+    lmesh_neighbor_tick(&node);
+    CHECK(!n->up && count_events(LMESH_EV_NEIGHBOR_DOWN) == 1);
+    CHECK(query_phi(5) >= LMESH_PHI_THRESHOLD);
+
+    node.now_ms += 1000u;
+    lmesh_neighbor_touch(&node, 5, -70, 3);
+    lmesh_neighbor_hello_seen(&node, n, ++seq, true, 255);
+    CHECK(n->up && n->phi_count == 0 && !n->periodic_valid);
+    CHECK(lmesh_neighbor_silence_limit_ms(n) == boot_limit);
+}
+
 int main(void)
 {
     test_etx_arithmetic();
@@ -253,6 +364,8 @@ int main(void)
     test_missed_hellos();
     test_link_failures();
     test_table_full();
+    test_phi_math();
+    test_phi_liveness();
     printf("%s (%d checks)\n", failures ? "FAILED" : "ok", checks);
     return failures ? 1 : 0;
 }
