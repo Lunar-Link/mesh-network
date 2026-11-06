@@ -5,6 +5,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lunar Mesh Node</title>
+<link rel="stylesheet" href="dashboard.css">
 <link rel="icon" href="data:,">
 <script>
 // Apply the saved theme (or the system's) before the page paints; storage may be unavailable.
@@ -379,12 +380,13 @@ function renderRxBadge() {
 }
 let restoreSim = false;  // the saved tab was Simulator: open it once the simulator connects
 function selectTab(tab) {
+  if (window.meshDashboard?.openDocked(tab.id)) return;
   restoreSim = false;
   for (const t of tabs) {
     const on = t === tab;
     t.setAttribute("aria-selected", String(on));
     t.tabIndex = on ? 0 : -1;
-    $(t.getAttribute("aria-controls")).hidden = !on;
+    $(t.getAttribute("aria-controls")).hidden = t.dataset.docked === "true" ? false : !on;
   }
   try { localStorage.setItem("lunar-mesh-tab", tab.id); } catch {}
   if (tab.id === "tab-overview") renderMap();  // the map sizes itself to its width, which is zero while hidden
@@ -1368,5 +1370,6 @@ $("btn-close").onclick = () => transport && transport.close();
   if (simAvailable && new URLSearchParams(location.search).has("sim")) connectSim();
 })();
 </script>
+<script src="dashboard.js"></script>
 </body>
 </html>

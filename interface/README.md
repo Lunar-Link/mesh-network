@@ -49,6 +49,12 @@ The main view keeps connection status, a short summary of this node, the network
 
 ## Techniques
 
+### Arrange Overview
+
+Drag a Messages, Routing, Simulator, or Console tab into either Overview column. Drop below **This node** to stack a panel there, or onto the upper/lower half of another panel to place it before/after that panel. Drag a panel's **⠿** handle to rearrange it. **Add panel** and **Other column** provide alternatives to dragging.
+
+Docked tabs remain in the navigation; clicking one opens Overview and focuses its panel. Panels share their original live controls, so docking preserves message drafts, simulator state, and the connection. **Minimize** hides a panel's contents, **Expand** restores them, and **Maximize** fills the window. Use **Restore size** or Escape to exit maximized view. **Return to tab** removes a docked panel while keeping Overview open; select its tab when you want to view it again. Layout and minimized state are saved in this browser; **Reset layout** restores the original two panels. Simulator panels appear only when a simulator connection is available.
+
 - **One command in flight.** Commands go through a queue; dump rows are collected until the `end` line, and event lines (`ev`) are handled whenever they arrive, so events and replies never mix up.
 - **Node clock estimate.** "Heard" times are node-clock values, so the page keeps the newest event time plus elapsed wall time to show ages.
 - **Simulator bridge.** `lmesh_console` reads commands for the attached node and `@` control lines on stdin; `serve.py` sends `@t <ms>` every 50 ms to advance the virtual clock in step with wall time, and forwards output to the page as server-sent events. The bridge sends its own control lines too, so it records who sent each line that gets a reply and passes only the page's replies to the page. Clock and control status goes to the page as a separate `sim` event, and the page takes a simulated node's clock from it.
