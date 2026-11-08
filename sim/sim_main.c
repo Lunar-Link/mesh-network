@@ -1,4 +1,4 @@
-/* Scenario runner: lmesh_sim [-v] <scenario> [seed] [csv] | sweep <scenario> <count> [csv] [--known file] | regress <file>. */
+/* Scenario runner: lmesh_sim [-v] [terrain options] <scenario> [seed] [csv] | sweep <scenario> <count> [csv] [--known file] | regress <file>. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -18,6 +18,7 @@ typedef struct known_seed {
 } known_seed;
 
 static sim_run run;
+static sim_terrain terrain;
 static known_seed known[MAX_KNOWN];
 static size_t known_count;
 
@@ -26,6 +27,7 @@ static int usage(void)
     fprintf(stderr, "usage: lmesh_sim [-v] <scenario> [seed] [csv_path]\n"
                     "       lmesh_sim [-v] sweep <scenario> <seed_count> [csv_path] [--known <seed_file>]\n"
                     "       lmesh_sim [-v] regress <seed_file>\n"
+                    "terrain options: --terrain <table> [--sigma <dB>] [--bias <dB>] [--decor <m>] [--timeline <csv>]\n"
                     "scenarios: ");
     sim_list_scenarios(stderr);
     return EXIT_UNKNOWN;
@@ -196,12 +198,24 @@ int main(int argc, char **argv)
     bool verbose = env && env[0] != '\0' && strcmp(env, "0") != 0;
     const char *args[MAX_ARGS] = {NULL};
     const char *known_path = NULL;
+    const char *terrain_path = NULL;
+    run.terrain.decor_m = 100.0;
     int n = 0;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-v") == 0) {
             verbose = true;
         } else if (strcmp(argv[i], "--known") == 0 && i + 1 < argc) {
             known_path = argv[++i];
+        } else if (strcmp(argv[i], "--terrain") == 0 && i + 1 < argc) {
+            terrain_path = argv[++i];
+        } else if (strcmp(argv[i], "--sigma") == 0 && i + 1 < argc) {
+            run.terrain.sigma_db = strtod(argv[++i], NULL);
+        } else if (strcmp(argv[i], "--bias") == 0 && i + 1 < argc) {
+            run.terrain.bias_db = strtod(argv[++i], NULL);
+        } else if (strcmp(argv[i], "--decor") == 0 && i + 1 < argc) {
+            run.terrain.decor_m = strtod(argv[++i], NULL);
+        } else if (strcmp(argv[i], "--timeline") == 0 && i + 1 < argc) {
+            run.terrain.timeline = argv[++i];
         } else if (n < MAX_ARGS) {
             args[n++] = argv[i];
         }
@@ -210,12 +224,21 @@ int main(int argc, char **argv)
     if (known_path && !load_known(known_path)) {
         return EXIT_UNKNOWN;
     }
+    if (terrain_path) {
+        char err[256];
+        if (!terrain_load(&terrain, terrain_path, err, sizeof err)) {
+            fprintf(stderr, "%s\n", err);
+            return EXIT_UNKNOWN;
+        }
+        run.terrain.table = &terrain;
+    }
 
     const char *name = n > 0 ? args[0] : "smoke";
     if (strcmp(name, "sweep") == 0) {
         if (n < 3) {
             return usage();
         }
+        run.terrain.timeline = NULL;
         uint32_t count = (uint32_t)strtoul(args[2], NULL, 10);
         return sweep(args[1], count, n > 3 ? args[3] : NULL, verbose);
     }

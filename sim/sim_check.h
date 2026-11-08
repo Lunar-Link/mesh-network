@@ -163,6 +163,13 @@ typedef enum sim_metric_id {
     M_EVICTED_URGENT,
     M_FALSE_DOWNS,
     M_DETECT_MS,
+    M_WALK_S,
+    M_PHYS_OUT_S,
+    M_ROUTE_OUT_S,
+    M_EXCESS_OUT_S,
+    M_FALSE_ROUTE_S,
+    M_NEXT_HOP_SWITCHES,
+    M_ERROR_SIGMA_DB,
     M_COUNT
 } sim_metric_id;
 
