@@ -1,8 +1,17 @@
-/* Simulator scenarios from PLAN.md Section 5 and the registry the runner looks them up in. */
+/* Simulator scenarios from PLAN.md Section 5, the terrain run, and the registry the runner looks them up in. */
 #ifndef LMESH_SIM_SCENARIOS_H
 #define LMESH_SIM_SCENARIOS_H
 
 #include "sim_check.h"
+#include "sim_terrain.h"
+
+typedef struct sim_terrain_opts {
+    sim_terrain *table;
+    double sigma_db;
+    double bias_db;
+    double decor_m;
+    const char *timeline;
+} sim_terrain_opts;
 
 typedef struct sim_run {
     sim_net net;
@@ -10,6 +19,7 @@ typedef struct sim_run {
     sim_metrics m;
     sim_topo topo;
     bool verbose;
+    sim_terrain_opts terrain;
 } sim_run;
 
 typedef void (*sim_scenario_fn)(sim_run *run);

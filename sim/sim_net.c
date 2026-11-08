@@ -13,9 +13,25 @@ static uint32_t port_random(void *ctx)
     return sim_rand(((sim_port_ctx *)ctx)->net);
 }
 
+uint32_t sim_lora_airtime_us(const sim_lora *lora, size_t len)
+{
+    uint32_t sf = lora->sf;
+    uint64_t tsym_us = ((uint64_t)1u << sf) * 1000000u / lora->bw_hz;
+    uint32_t ldro = tsym_us > 16000u ? 1u : 0u;
+    int32_t num = 8 * (int32_t)len - 4 * (int32_t)sf + 28 + 16;
+    int32_t den = 4 * (int32_t)(sf - 2u * ldro);
+    uint32_t blocks = num > 0 ? (uint32_t)((num + den - 1) / den) : 0u;
+    uint32_t symbols = 8u + blocks * (lora->cr + 4u);
+    uint64_t quarters = 4u * (uint64_t)lora->preamble + 17u + 4u * (uint64_t)symbols;
+    return (uint32_t)(quarters * ((uint64_t)1u << sf) * 1000000u / (4u * (uint64_t)lora->bw_hz));
+}
+
 static uint32_t port_airtime_ms(void *ctx, size_t len)
 {
     sim_net *net = ((sim_port_ctx *)ctx)->net;
+    if (net->lora.sf) {
+        return (sim_lora_airtime_us(&net->lora, len) + 999u) / 1000u;
+    }
     return net->airtime_fixed_ms + (uint32_t)((len * net->airtime_us_per_byte + 999u) / 1000u);
 }
 
@@ -60,6 +76,12 @@ void sim_init(sim_net *net, uint32_t seed)
     net->rng = seed ? seed : 0x9E3779B9u;
     net->airtime_fixed_ms = 15;
     net->airtime_us_per_byte = 1500;
+    for (int a = 0; a < SIM_MAX_NODES; a++) {
+        for (int b = 0; b < SIM_MAX_NODES; b++) {
+            net->rssi[a][b] = -80;
+            net->snr[a][b] = 8;
+        }
+    }
 }
 
 int sim_add_node(sim_net *net, lmesh_node_id id, uint8_t network_id, void (*on_event)(void *ctx, const lmesh_event *ev),
@@ -114,6 +136,12 @@ void sim_set_link(sim_net *net, int a, int b, bool up, uint8_t loss_pct)
 void sim_set_loss_dir(sim_net *net, int from, int to, uint8_t loss_pct)
 {
     net->loss_pct[from][to] = loss_pct;
+}
+
+void sim_set_signal(sim_net *net, int from, int to, int16_t rssi, int8_t snr)
+{
+    net->rssi[from][to] = rssi;
+    net->snr[from][to] = snr;
 }
 
 void sim_kill(sim_net *net, int i)
@@ -196,7 +224,7 @@ static void deliver(sim_net *net, int from)
         if (net->on_frame) {
             net->on_frame(net->frame_ctx, from, j, tx->tx_buf, tx->tx_len);
         }
-        lmesh_radio_rx(&rx->mesh, tx->tx_buf, tx->tx_len, -80, 8);
+        lmesh_radio_rx(&rx->mesh, tx->tx_buf, tx->tx_len, net->rssi[from][j], net->snr[from][j]);
     }
     tx->tx_active = false;
     lmesh_radio_tx_done(&tx->mesh, true);

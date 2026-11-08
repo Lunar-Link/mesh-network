@@ -39,9 +39,12 @@ lmesh_warnings(lmesh)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     enable_testing()
 
-    add_executable(lmesh_sim sim/sim_net.c sim/sim_topo.c sim/sim_check.c sim/sim_msg.c sim/sim_scenarios.c
-                             sim/sim_main.c)
+    add_executable(lmesh_sim sim/sim_net.c sim/sim_topo.c sim/sim_check.c sim/sim_msg.c sim/sim_terrain.c
+                             sim/sim_scenarios.c sim/sim_main.c)
     target_link_libraries(lmesh_sim PRIVATE lmesh)
+    if(NOT MSVC)
+        target_link_libraries(lmesh_sim PRIVATE m)
+    endif()
     lmesh_warnings(lmesh_sim)
 
     add_executable(lmesh_console sim/sim_net.c sim/sim_topo.c sim/sim_console.c)
@@ -101,4 +104,9 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
         add_test(NAME sim_sweep_${scenario}
                  COMMAND lmesh_sim sweep ${scenario} 20 --known ${CMAKE_CURRENT_SOURCE_DIR}/sim/regression_seeds.txt)
     endforeach()
+
+    # Terrain run on a committed link table (terrain-sims/models/linktable.py --plan 0), median and with model error.
+    set(TERRAIN_TABLE ${CMAKE_CURRENT_SOURCE_DIR}/sim/terrain/plan0.txt)
+    add_test(NAME sim_terrain_plan0 COMMAND lmesh_sim --terrain ${TERRAIN_TABLE} terrain 1)
+    add_test(NAME sim_sweep_terrain_plan0 COMMAND lmesh_sim --terrain ${TERRAIN_TABLE} --sigma 8 --bias 6 sweep terrain 10)
 endif()

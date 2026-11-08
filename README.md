@@ -84,13 +84,15 @@ The folder is a PlatformIO project: `src/` is the firmware and `lib/lmesh/` is t
 
 | File | Contents |
 |---|---|
-| `sim/sim_net.c` | Virtual medium: per-link up/down and loss, half-duplex receivers, node kill and revive, link cut, event-driven clock stepping, frame and iteration hooks; the port implementation for simulated nodes. |
+| `sim/sim_net.c` | Virtual medium: per-link up/down, loss, RSSI and SNR, LoRa airtime from the driver's formula when set, half-duplex receivers, node kill and revive, link cut, event-driven clock stepping, frame and iteration hooks; the port implementation for simulated nodes. |
 | `sim/sim_topo.c` | Topologies: line, diamond, random connected graphs from a seed, BFS distances, diameter, kill candidates that keep the graph connected. |
 | `sim/sim_check.c` | Observation and checks: event and frame capture, convergence tracking, route-graph loop walk, per-hop metric identity, metrics and CSV output. |
 | `sim/sim_msg.c` | Message tracking: per-message state history, exactly-once delivery, one terminal state per message, hop-count bound, store-record disappearance audit. |
-| `sim/sim_scenarios.c` | Scenarios S1 to S14 of PLAN.md Section 5 plus S12L. |
+| `sim/sim_scenarios.c` | Scenarios S1 to S15 of PLAN.md Section 5 plus S12L, and `terrain`: a crew walking a route over a link table, telemetry up every 30 s and messages down every 60 s, with physics and route outage per second and an optional timeline CSV. |
+| `sim/sim_terrain.c` | Terrain medium: reads a link table from `terrain-sims/models/linktable.py`, turns margin into frame loss with a logistic curve, sets RSSI and SNR, powers relays on at their drop time, and draws model error per seed (a common bias plus a per-pair offset that decorrelates along a mobile node's track). |
+| `sim/terrain/` | Link tables; `plan0.txt` is route plan 0 (design-reference EVA, 2 km) at SF9 with isotropic antennas, used by CTest. |
 | `sim/sim_console.c` | `lmesh_console [line\|ring\|diamond\|random] [nodes] [seed] [loss_pct]`: a simulated network with one node's line protocol on stdin and stdout, advanced by `@t <ms>` lines; `@kill`, `@revive`, `@cut`, `@join`, `@attach`, `@topo` control it. Drives `interface/` without boards. |
-| `sim/sim_main.c` | Runner: `lmesh_sim <scenario> [seed] [csv]`, `lmesh_sim sweep <scenario> <seeds> [--known file]`, `lmesh_sim regress <file>`; `-v` prints every node's event stream. |
+| `sim/sim_main.c` | Runner: `lmesh_sim <scenario> [seed] [csv]`, `lmesh_sim sweep <scenario> <seeds> [--known file]`, `lmesh_sim regress <file>`; `-v` prints every node's event stream; `--terrain <table>` with `--sigma`, `--bias`, `--decor` and `--timeline` for the terrain run. |
 | `sim/regression_seeds.txt` | Seeds that once failed, one `<scenario> <seed>` per line; `regress` re-runs them and `sweep --known` skips them. Empty when everything passes. |
 | `sim/results/` | Sweep output: one CSV row per run and one per message for the S9 and S11 sweeps. |
 | `tests/unit/test_smoke.c` | Initialization contract, argument validation, tick and wake bound. `test_<module>.c` holds each module's tests. |
@@ -108,6 +110,7 @@ The folder is a PlatformIO project: `src/` is the firmware and `lib/lmesh/` is t
 - **Status floods and a node table.** Each node floods a small health frame about once a minute; every node holds a table of all nodes and their links, so the interface can be plugged into any node.
 - **Line protocol for the interface.** Text commands in, one JSON object per line out. The node never waits on it.
 - **Host simulation first.** Deterministic, seeded scenarios with built-in invariant checks gate each phase before hardware.
+- **Terrain links from a precomputed table.** The R2 hybrid model with antenna patterns runs offline in Python, the same model as the Malapert planner; the simulator reads directed loss per time step, so runs stay seeded, fast and Python-free. Seeds sample the model's error instead of only the protocol's randomness.
 
 ## Build and test
 
@@ -119,11 +122,15 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ./build/lmesh_sim S4 1
 ./build/lmesh_sim sweep S6 200
+./build/lmesh_sim --terrain sim/terrain/plan0.txt --timeline plan0.csv terrain 1
+./build/lmesh_sim --terrain sim/terrain/plan0.txt --sigma 8 --bias 6 sweep terrain 200
 ```
+
+A link table for another route plan or placement comes from `terrain-sims` (`python -B -m models.linktable --list`, then `--plan <i> -o <file>`, or a scenario JSON; see its `models/README.md`).
 
 The browser interface for a node is in `interface/`; `python interface/serve.py --sim` runs it against `lmesh_console`.
 
-CTest runs the unit tests, seed 1 of every scenario, and 20-seed sweeps of S3, S6, S9 and S11. The build defaults to Release; a sweep of 200 seeds takes seconds.
+CTest runs the unit tests, seed 1 of every scenario, 20-seed sweeps of S3, S6, S9, S11 and S15, and the terrain run on plan 0 (seed 1, and 10 seeds with model error). The build defaults to Release; a sweep of 200 seeds takes seconds.
 
 The board firmware builds with PlatformIO (the VS Code extension, or `pio` from its core) for either a Nucleo-F446RE or a Nucleo-L476RG. Both are Nucleo-64 boards and take the same wiring. Environments are named `<radio>_<chip>`, with chip `f446` or `l476`. The radios are `rylr999` (`rylr999_f446` is the default), `lr1121` (the 433 MHz design radio), `rylr498` (a 433 MHz AT-command module) and `none` (no radio).
 
