@@ -47,8 +47,11 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     endif()
     lmesh_warnings(lmesh_sim)
 
-    add_executable(lmesh_console sim/sim_net.c sim/sim_topo.c sim/sim_console.c)
+    add_executable(lmesh_console sim/sim_net.c sim/sim_topo.c sim/sim_terrain.c sim/sim_console.c)
     target_link_libraries(lmesh_console PRIVATE lmesh)
+    if(NOT MSVC)
+        target_link_libraries(lmesh_console PRIVATE m)
+    endif()
     lmesh_warnings(lmesh_console)
 
     function(lmesh_add_test name)
@@ -109,4 +112,10 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     set(TERRAIN_TABLE ${CMAKE_CURRENT_SOURCE_DIR}/sim/terrain/plan0.txt)
     add_test(NAME sim_terrain_plan0 COMMAND lmesh_sim --terrain ${TERRAIN_TABLE} terrain 1)
     add_test(NAME sim_sweep_terrain_plan0 COMMAND lmesh_sim --terrain ${TERRAIN_TABLE} --sigma 8 --bias 6 sweep terrain 10)
+
+    find_package(Python3 COMPONENTS Interpreter QUIET)
+    if(Python3_Interpreter_FOUND)
+        add_test(NAME console_terrain COMMAND ${Python3_EXECUTABLE} -B
+                 ${CMAKE_CURRENT_SOURCE_DIR}/tests/interface/test_console_terrain.py --console $<TARGET_FILE:lmesh_console>)
+    endif()
 endif()

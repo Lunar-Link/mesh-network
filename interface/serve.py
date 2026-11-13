@@ -20,7 +20,7 @@ TOPO_EVERY_S = 1.0
 STATUS_EVERY_S = 0.5
 SPEED_MIN, SPEED_MAX = 0.05, 200.0
 STEP_MAX_S = 3600
-TOPOS = ("line", "ring", "diamond", "random")
+TOPOS = ("line", "ring", "diamond", "random", "terrain")
 MAX_NODES = 16
 
 
@@ -46,8 +46,9 @@ class Sim:
     one-command-in-flight queue never sees a reply it did not ask for.
     """
 
-    def __init__(self, exe, topo, nodes, seed, loss, speed):
+    def __init__(self, exe, topo, nodes, seed, loss, speed, terrain=None):
         self.exe = exe
+        self.terrain = Path(terrain).resolve() if terrain else None
         self.lock = threading.Lock()  # stdin and owners
         self.ctl = threading.RLock()  # clock, outages, schedule
         self.clients = set()
@@ -61,15 +62,16 @@ class Sim:
         self.step_ms = 0
         self.chaos = {"node_pct": 0.0, "link_pct": 0.0, "mean_s": 60.0, "spare_attached": True}
         self.rng = random.Random(seed)
-        self._start(topo, nodes, seed, loss)
+        self._start("terrain" if self.terrain else topo, nodes, seed, loss)
         threading.Thread(target=self._tick, daemon=True).start()
 
     # Process
 
     def _start(self, topo, nodes, seed, loss):
-        self.args = {"topo": topo, "nodes": nodes, "seed": seed, "loss": loss}
+        self.args = {"topo": topo, "nodes": nodes, "seed": seed, "loss": loss, "terrain_available": bool(self.terrain)}
         self.owners = deque()
-        self.proc = subprocess.Popen([str(self.exe), topo, str(nodes), str(seed), str(loss)], stdin=subprocess.PIPE,
+        source = str(self.terrain) if topo == "terrain" else str(nodes)
+        self.proc = subprocess.Popen([str(self.exe), topo, source, str(seed), str(loss)], stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, text=True, bufsize=1)
         self.sim_ms = 0
         self.loss = loss
@@ -84,6 +86,11 @@ class Sim:
         self.generation += 1
         threading.Thread(target=self._read, args=(self.proc,), daemon=True).start()
         self._refresh_topo()
+        if topo == "terrain" and (not self.topo or not self.topo.get("terrain")):
+            self.proc.terminate()
+            raise ValueError("terrain console did not start; check the table and rebuild with cmake --build build")
+        if self.topo and self.topo.get("nodes"):
+            self.args["nodes"] = len(self.topo["nodes"])
 
     def restart(self, topo, nodes, seed, loss):
         with self.ctl:
@@ -189,7 +196,7 @@ class Sim:
         t = self.ask("@topo")
         if isinstance(t, dict) and "alive" in t:
             self.topo = t
-            self.all_ids |= set(t["alive"])
+            self.all_ids |= set(t.get("nodes", t["alive"]))
             self.last_topo = time.monotonic()
             alive = set(t["alive"])
             for n in list(self.we_killed):
@@ -375,6 +382,10 @@ class Sim:
     def set_loss(self, pct):
         with self.ctl:
             self.loss = min(max(int(pct), 0), 100)
+            if self.args["topo"] == "terrain":
+                self.write(f"@loss {self.loss}")
+                self._refresh_topo()
+                return
             self._refresh_topo()
             for a, b, _ in (self.topo or {}).get("links", []):
                 self.write(f"@join {a} {b} {self.loss}")
@@ -418,7 +429,7 @@ class Sim:
             nodes = int(req.get("nodes", self.args["nodes"]))
             seed = int(req.get("seed", self.args["seed"]))
             loss = int(req.get("loss", self.loss))
-            if topo not in TOPOS or not 2 <= nodes <= MAX_NODES or not 0 <= loss <= 100:
+            if topo not in TOPOS or (topo == "terrain" and not self.terrain) or not 2 <= nodes <= MAX_NODES or not 0 <= loss <= 100:
                 raise ValueError("bad restart arguments")
             self.restart(topo, nodes, seed, loss)
             return
@@ -509,6 +520,7 @@ def main():
     p.add_argument("--sim", action="store_true", help="run the simulator console and offer it to the page")
     p.add_argument("--exe", type=Path, default=DEFAULT_EXE, help="path to lmesh_console")
     p.add_argument("--topo", default="random", choices=TOPOS)
+    p.add_argument("--terrain", type=Path, help="terrain link table; uses its node count and track instead of --topo/--nodes")
     p.add_argument("--nodes", type=int, default=8)
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--loss", type=int, default=0, help="loss percent on every link")
@@ -519,11 +531,15 @@ def main():
     if a.sim:
         if not a.exe.exists():
             sys.exit(f"{a.exe} not found; build it from the repository root with: cmake --build build")
-        sim = Sim(a.exe, a.topo, a.nodes, a.seed, a.loss, a.speed)
+        if a.topo == "terrain" and not a.terrain:
+            p.error("--topo terrain requires --terrain <table>")
+        if a.terrain and not a.terrain.is_file():
+            p.error(f"terrain table not found: {a.terrain}")
+        sim = Sim(a.exe, a.topo, a.nodes, a.seed, a.loss, a.speed, a.terrain)
 
     server = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(sim))
     server.daemon_threads = True
-    mode = f"simulator: {a.topo} of {a.nodes}, seed {a.seed}, {a.loss} % loss, x{a.speed:g}" if sim else "USB only"
+    mode = f"simulator: {sim.args['topo']} of {sim.args['nodes']}, seed {a.seed}, {a.loss} % loss, x{a.speed:g}" if sim else "USB only"
     print(f"interface at http://localhost:{a.port}/  ({mode}); Ctrl+C to stop")
     try:
         server.serve_forever()

@@ -103,10 +103,12 @@ bool terrain_load(sim_terrain *t, const char *path, char *err, size_t err_max)
             double sf, bw, cr, pre;
             ok = keyed(f, "sf", &sf) && keyed(f, "bw_hz", &bw) && keyed(f, "cr", &cr) && keyed(f, "preamble", &pre) &&
                  sf >= 5 && sf <= 12 && bw > 0 && cr >= 1 && cr <= 4 && pre >= 6;
-            t->lora.sf = (uint8_t)sf;
-            t->lora.bw_hz = (uint32_t)bw;
-            t->lora.cr = (uint8_t)cr;
-            t->lora.preamble = (uint16_t)pre;
+            if (ok) {
+                t->lora.sf = (uint8_t)sf;
+                t->lora.bw_hz = (uint32_t)bw;
+                t->lora.cr = (uint8_t)cr;
+                t->lora.preamble = (uint16_t)pre;
+            }
         } else if (strcmp(w, "times") == 0) {
             ok = count(f, &t->times) && number(f, &t->step_s) && t->times > 0 && t->step_s > 0;
             have_times = ok;

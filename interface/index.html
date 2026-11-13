@@ -6,6 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lunar Mesh Node</title>
 <link rel="stylesheet" href="dashboard.css">
+<script src="link-quality.js"></script>
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
 <script>
 // Apply the saved theme (or the system's) before the page paints; storage may be unavailable.
@@ -184,9 +185,11 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
   </section>
 
   <section class="c7">
-    <h2>Network <span class="count" id="net-count"></span></h2>
+    <h2>Network <span class="count" id="net-count"></span>
+      <span class="tools"><label>Link color <select id="map-color" aria-label="Color network links by"><option value="margin">Terrain margin (dB)</option><option value="etx">Delivery quality (ETX)</option></select></label></span>
+    </h2>
     <svg id="map" role="img" aria-label="Network map"></svg>
-    <div class="note muted" style="font-size:12px"><span id="map-hint"></span>Line color is <span class="term" data-term="ETX">ETX</span>: green ≤ 1.5, amber ≤ 3, red above. Dashed: stale report.</div>
+    <div class="note muted" style="font-size:12px"><span id="map-hint"></span><span id="map-legend">Terrain link margin: red &lt; 10 dB, yellow 10–&lt;20 dB, green ≥ 20 dB. Gray: unknown or offline. Dashed: predicted-only or stale.</span></div>
   </section>
   </div>
 
@@ -282,7 +285,7 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
 
       <div class="k">Restart network</div>
       <div class="v">
-        <label>Topology <select id="sim-rt"><option>random</option><option>line</option><option>ring</option><option>diamond</option></select></label>
+        <label>Topology <select id="sim-rt"><option>random</option><option>line</option><option>ring</option><option>diamond</option><option value="terrain" disabled>terrain</option></select></label>
         <label>Nodes <input id="sim-rn" type="number" min="2" max="16"></label>
         <label>Seed <input id="sim-rs" type="number" min="0"></label>
         <button id="sim-restart" data-tip="Start a fresh simulated network. All node state is lost.">Restart</button>
@@ -338,6 +341,7 @@ function clearLive() {
 /* Take in a simulator @topo reply and track whether the attached node is alive. */
 function noteSim(topo) {
   topo.alive.forEach(id => simIds.add(id));
+  (topo.nodes || []).forEach(id => simIds.add(id));
   topo.links.forEach(([a, b]) => { simIds.add(a); simIds.add(b); });
   const down = !topo.alive.includes(topo.attached);
   if (st.down && !down) {
@@ -1024,6 +1028,15 @@ function renderMap() {
   };
   if (self !== null) for (const l of st.links) if (l.up) addEdge(self, l.id, l.etx, false);
   for (const n of st.nodes) for (const [id, e] of n.neighbors) addEdge(n.node, id, e, n.stale);
+  const marginColors = $("map-color").value === "margin";
+  const terrainMargins = LMeshLinkQuality.margins(sim ? st.sim.margins : null);
+  const disabledTerrainLinks = new Set((sim && Array.isArray(st.sim.margins) ? st.sim.margins : []).filter(row => row[4] === true).map(([a, b]) => LMeshLinkQuality.key(a, b)));
+  if (sim && st.sim.terrain && marginColors) {
+    for (const [a, b] of st.sim.margins || []) {
+      if (!st.sim.alive.includes(a) || !st.sim.alive.includes(b)) continue;
+      if (!edges.has(LMeshLinkQuality.key(a, b))) addEdge(a, b, null, true);
+    }
+  }
 
   const list = [...ids].sort((a, b) => a - b);
   mapAdj = new Map(list.map(id => [id, new Set()]));
@@ -1038,7 +1051,11 @@ function renderMap() {
   let out = "";
   for (const e of edges.values()) {
     const [x1, y1] = pos.get(e.a), [x2, y2] = pos.get(e.b);
-    out += `<line class="edge" data-a="${e.a}" data-b="${e.b}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${e.stale ? color("stale") : color(etxClass(e.etx))}" stroke-width="2" ${e.stale ? 'stroke-dasharray="4 4"' : ""}/>`;
+    const margin = terrainMargins.get(LMeshLinkQuality.key(e.a, e.b));
+    const unavailable = simDead(e.a) || simDead(e.b) || disabledTerrainLinks.has(LMeshLinkQuality.key(e.a, e.b));
+    const quality = marginColors ? unavailable ? "stale" : LMeshLinkQuality.marginClass(margin) : e.stale ? "stale" : etxClass(e.etx);
+    const description = marginColors ? `Nodes ${e.a}–${e.b}: ${Number.isFinite(margin) ? `${Number(margin.toFixed(3))} dB terrain margin (weaker direction)` : "terrain margin unknown"}${unavailable ? "; link unavailable" : ""}${e.stale ? "; predicted-only or stale report" : ""}` : `Nodes ${e.a}–${e.b}: ETX ${e.etx === null ? "unknown" : etxText(e.etx)}${e.stale ? "; stale report" : ""}`;
+    out += `<line class="edge" data-a="${e.a}" data-b="${e.b}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color(quality)}" stroke-width="2" ${e.stale || unavailable ? 'stroke-dasharray="4 4"' : ""} tabindex="0" role="img" aria-label="${esc(description)}"><title>${esc(description)}</title></line>`;
   }
   for (const id of list) {
     const [x, y] = pos.get(id);
@@ -1062,8 +1079,14 @@ function renderMap() {
   svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
   svg.innerHTML = out;
   setMapHover(mapHover);
-  $("map-hint").textContent = sim ? "Click a node to plug in. " : "";
+  $("map-hint").textContent = (sim ? "Click a node to plug in. " : "") + (marginColors && !terrainMargins.size ? "No terrain margins in this run; start the server with --terrain or choose ETX. " : "");
+  $("map-legend").textContent = marginColors ? "Terrain link margin: red < 10 dB, yellow 10–<20 dB, green ≥ 20 dB. Gray: unknown or offline. Dashed: predicted-only or stale." : "Delivery quality (ETX): green ≤ 1.5, yellow ≤ 3, red above. Dashed: stale report.";
 }
+$("map-color").onchange = () => {
+  try { localStorage.setItem("lunar-mesh-map-color", $("map-color").value); } catch {}
+  renderMap();
+};
+try { const metric = localStorage.getItem("lunar-mesh-map-color"); if (["margin", "etx"].includes(metric)) $("map-color").value = metric; } catch {}
 function setMapHover(id) {
   const svg = $("map");
   mapHover = id != null && mapAdj.has(id) ? id : null;
@@ -1131,6 +1154,9 @@ function onSimStatus(s) {
     refresh();
   }
   renderSimCtl();
+  $("sim-rt").querySelector('[value="terrain"]').disabled = !s.args.terrain_available;
+  $("sim-rn").disabled = s.args.topo === "terrain";
+  if (s.args.topo === "terrain") $("sim-rn").value = s.args.nodes;
 }
 
 const nearestSpeed = x => SPEEDS.reduce((bi, v, i) => Math.abs(Math.log(v / x)) < Math.abs(Math.log(SPEEDS[bi] / x)) ? i : bi, 0);
