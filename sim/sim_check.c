@@ -530,6 +530,15 @@ static const char *const names[M_COUNT] = {
     [M_EVICTED_ROUTINE] = "evicted_routine",
     [M_EVICTED_NORMAL] = "evicted_normal",
     [M_EVICTED_URGENT] = "evicted_urgent",
+    [M_FALSE_DOWNS] = "false_downs",
+    [M_DETECT_MS] = "detect_ms",
+    [M_WALK_S] = "walk_s",
+    [M_PHYS_OUT_S] = "physics_out_s",
+    [M_ROUTE_OUT_S] = "route_out_s",
+    [M_EXCESS_OUT_S] = "excess_out_s",
+    [M_FALSE_ROUTE_S] = "false_route_s",
+    [M_NEXT_HOP_SWITCHES] = "next_hop_switches",
+    [M_ERROR_SIGMA_DB] = "error_sigma_db",
 };
 
 static const sim_metric_id summary_ids[] = {
@@ -539,7 +548,8 @@ static const sim_metric_id summary_ids[] = {
     M_LATENCY_MEAN_MS, M_LATENCY_P95_MS, M_LATENCY_MAX_MS, M_RX_LATENCY_MEAN_MS, M_RX_LATENCY_MAX_MS, M_DUPLICATES,
     M_STORE_DEPTH_MAX, M_RECEIPTS_SENT, M_DATA_RETRIES, M_RESEND_FRAMES, M_EVICTIONS, M_LOAD, M_HANDOVERS,
     M_CMD_EXECUTIONS, M_HOLD_DATA_FRAMES, M_EXPIRE_AFTER_MS, M_HEAL_FIRST_MS, M_HEAL_LAST_MS, M_KILL_TO_DELIVERY_MS,
-    M_REFUSED_SUBMITS, M_EVICTED_ROUTINE, M_EVICTED_NORMAL, M_EVICTED_URGENT, M_STORE_UNEXPLAINED};
+    M_REFUSED_SUBMITS, M_EVICTED_ROUTINE, M_EVICTED_NORMAL, M_EVICTED_URGENT, M_STORE_UNEXPLAINED, M_FALSE_DOWNS, M_DETECT_MS,
+    M_WALK_S, M_PHYS_OUT_S, M_ROUTE_OUT_S, M_EXCESS_OUT_S, M_FALSE_ROUTE_S, M_NEXT_HOP_SWITCHES, M_ERROR_SIGMA_DB};
 
 const char *metric_name(sim_metric_id id)
 {

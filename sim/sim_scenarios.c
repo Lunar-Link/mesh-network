@@ -1,4 +1,4 @@
-/* Simulator scenarios S1-S14 from PLAN.md Section 5, plus the smoke run. */
+/* Simulator scenarios S1-S15 from PLAN.md Section 5, the smoke run, and the terrain run over a link table. */
 #include "sim_scenarios.h"
 
 #include <string.h>
@@ -1529,11 +1529,252 @@ static void scen_s14(sim_run *r)
     }
 }
 
+/* S15: HELLO liveness on lossy links. A line of four nodes with S15_LOSS_PCT loss each way and no data traffic, so
+ * every neighbor-down comes from the liveness detector alone. Over S15_RUN_MS every down is false; then the end node
+ * is killed and the time until its neighbor declares it down is measured. */
+#define S15_NODES 4
+#ifndef S15_LOSS_PCT
+#define S15_LOSS_PCT 30u
+#endif
+#define S15_RUN_MS 7200000u
+#define S15_DETECT_BOUND_MS 180000u
+
+static uint32_t neighbor_downs(const sim_run *r)
+{
+    uint32_t c = 0;
+    for (int i = 0; i < S15_NODES; i++) {
+        c += r->obs.events[i][LMESH_EV_NEIGHBOR_DOWN];
+    }
+    return c;
+}
+
+static void scen_s15(sim_run *r)
+{
+    sim_topo t;
+    topo_line(&t, S15_NODES);
+    build(r, &t);
+    topo_apply(&r->net, &t, S15_LOSS_PCT);
+
+    bool up = false;
+    while (!up && r->net.now_ms < 10u * DISCOVERY_BOUND_MS) {
+        sim_step(&r->net, SAMPLE_MS);
+        up = true;
+        for (int i = 0; i + 1 < S15_NODES; i++) {
+            up = up && usable_pair(&r->net, i, i + 1) && usable_pair(&r->net, i + 1, i);
+        }
+    }
+    if (!up) {
+        metrics_fail(&r->m, "line not discovered within %lu ms", (unsigned long)r->net.now_ms);
+        return;
+    }
+    metric_set(&r->m, M_DISCOVERY_MS, r->net.now_ms);
+
+    uint32_t downs0 = neighbor_downs(r);
+    uint32_t t0 = r->net.now_ms;
+    while (r->net.now_ms - t0 < S15_RUN_MS) {
+        sim_step(&r->net, SAMPLE_MS);
+    }
+    metric_set(&r->m, M_FALSE_DOWNS, neighbor_downs(r) - downs0);
+
+    const int victim = S15_NODES - 1;
+    const int watcher = S15_NODES - 2;
+    lmesh_neighbor_info info;
+    uint32_t tw = r->net.now_ms;
+    while (!(neighbor_get(&r->net, watcher, victim, &info) && info.up) && r->net.now_ms - tw < S15_DETECT_BOUND_MS) {
+        sim_step(&r->net, FINE_SAMPLE_MS);
+    }
+    uint32_t tk = r->net.now_ms;
+    sim_kill(&r->net, victim);
+    while (neighbor_get(&r->net, watcher, victim, &info) && info.up && r->net.now_ms - tk < 2u * S15_DETECT_BOUND_MS) {
+        sim_step(&r->net, FINE_SAMPLE_MS);
+    }
+    bool detected = neighbor_get(&r->net, watcher, victim, &info) && !info.up;
+    if (!detected) {
+        metrics_fail(&r->m, "killed node still up at its neighbor after %lu ms", (unsigned long)(r->net.now_ms - tk));
+        return;
+    }
+    metric_set(&r->m, M_DETECT_MS, r->net.now_ms - tk);
+    if (r->net.now_ms - tk > S15_DETECT_BOUND_MS) {
+        metrics_fail(&r->m, "kill detected after %lu ms, bound %lu ms", (unsigned long)(r->net.now_ms - tk),
+                     (unsigned long)S15_DETECT_BOUND_MS);
+    }
+}
+
+#define TERRAIN_UP_MS 30000u
+#define TERRAIN_DOWN_MS 60000u
+#define TERRAIN_LIFETIME_S 1800u
+#define TERRAIN_TAIL_MS 300000u
+#define TERRAIN_MARGIN_DB 0.0
+#define TERRAIN_BASE 0
+
+static int terrain_crew(const sim_terrain *tm)
+{
+    for (int i = 0; i < tm->n; i++) {
+        if (tm->node[i].mobile) {
+            return i;
+        }
+    }
+    return tm->n - 1;
+}
+
+static void terrain_send(sim_run *r, int from, int to, const char *what, uint32_t k, uint32_t *refused)
+{
+    char text[24];
+    snprintf(text, sizeof text, "%s %04lu", what, (unsigned long)k);
+    lmesh_msg_ref ref;
+    lmesh_err e = lmesh_send(&r->net.nodes[from].mesh, r->net.nodes[to].ident.id, LMESH_MSG_TEXT, LMESH_PRIO_NORMAL,
+                             TERRAIN_LIFETIME_S, (const uint8_t *)text, strlen(text), &ref);
+    if (e == LMESH_ERR_FULL) {
+        (*refused)++;
+    } else if (e != LMESH_OK || !msgobs_find(&r->obs.msg, ref)) {
+        metrics_fail(&r->m, "t=%lu ms submit at %u returned %d", (unsigned long)r->net.now_ms,
+                     r->net.nodes[from].ident.id, (int)e);
+    }
+}
+
+static double terrain_pair_margin(const sim_terrain *tm, int a, int b, double ts)
+{
+    double ab = terrain_margin_db(tm, a, b, ts), ba = terrain_margin_db(tm, b, a, ts);
+    return ab < ba ? ab : ba;
+}
+
+static void terrain_row(const sim_run *r, FILE *tl, int crew, double ts, bool phys, bool up, bool down,
+                        lmesh_node_id next)
+{
+    const sim_terrain *tm = r->terrain.table;
+    double x, y, best = -999.0;
+    terrain_position(tm, crew, ts, &x, &y);
+    for (int i = 0; i < tm->n; i++) {
+        if (i != crew && r->net.nodes[i].alive) {
+            double m = terrain_pair_margin(tm, crew, i, ts);
+            best = m > best ? m : best;
+        }
+    }
+    fprintf(tl, "%.0f,%.1f,%.1f,%d,%d,%d,%u,%.1f", ts, x, y, phys, up, down, (unsigned)next, best);
+    for (int i = 0; i < tm->n; i++) {
+        if (i == crew) {
+            continue;
+        }
+        if (r->net.nodes[i].alive) {
+            fprintf(tl, ",%.1f", terrain_pair_margin(tm, crew, i, ts));
+        } else {
+            fprintf(tl, ",");
+        }
+    }
+    fprintf(tl, "\n");
+}
+
+static void scen_terrain(sim_run *r)
+{
+    sim_terrain *tm = r->terrain.table;
+    if (!tm || !tm->loaded) {
+        metrics_fail(&r->m, "no terrain table: run with --terrain <file>");
+        return;
+    }
+    terrain_draw(tm, r->m.seed, r->terrain.sigma_db, r->terrain.bias_db, r->terrain.decor_m);
+    r->net.lora = tm->lora;
+    for (int i = 0; i < tm->n; i++) {
+        if (sim_add_node(&r->net, (lmesh_node_id)(i + 1), NETWORK_ID, on_event, NULL) < 0) {
+            metrics_fail(&r->m, "cannot add node %d", i + 1);
+            return;
+        }
+    }
+    bool started[SIM_MAX_NODES];
+    for (int i = 0; i < tm->n; i++) {
+        started[i] = tm->node[i].start_s <= 0.0;
+        if (!started[i]) {
+            sim_kill(&r->net, i);
+        }
+    }
+    const int base = TERRAIN_BASE, crew = terrain_crew(tm);
+    FILE *tl = r->terrain.timeline ? fopen(r->terrain.timeline, "w") : NULL;
+    if (r->terrain.timeline && !tl) {
+        metrics_fail(&r->m, "cannot write timeline %s", r->terrain.timeline);
+    }
+    if (tl) {
+        fprintf(tl, "t_s,x,y,physics,route_up,route_down,next_hop,best_margin_db");
+        for (int i = 0; i < tm->n; i++) {
+            if (i != crew) {
+                fprintf(tl, ",margin_%s", tm->node[i].name);
+            }
+        }
+        fprintf(tl, "\n");
+    }
+    if (r->verbose) {
+        printf("terrain %s: %d nodes, crew %s, walk %.0f s, %s SF%u, sigma %.1f dB, bias %.1f dB\n", tm->name, tm->n,
+               tm->node[crew].name, terrain_end_s(tm), tm->preset, tm->lora.sf, r->terrain.sigma_db, r->terrain.bias_db);
+    }
+
+    traffic tr;
+    sampler_init(&tr.s);
+    terrain_apply(tm, &r->net, 0.0);
+    audit_start(r);
+    traffic_audit(r, &tr);
+
+    const uint32_t walk_ms = (uint32_t)(terrain_end_s(tm) * 1000.0);
+    const uint32_t end_ms = walk_ms + TERRAIN_TAIL_MS;
+    uint32_t next_up = TERRAIN_UP_MS, next_down = TERRAIN_DOWN_MS, k_up = 0, k_down = 0, refused = 0;
+    uint32_t seconds = 0, phys_out = 0, route_out = 0, excess = 0, false_route = 0, switches = 0;
+    lmesh_node_id last_next = LMESH_ID_NONE;
+    while ((int32_t)(end_ms - r->net.now_ms) > 0) {
+        double ts = r->net.now_ms / 1000.0;
+        for (int i = 0; i < tm->n; i++) {
+            if (!started[i] && ts >= tm->node[i].start_s) {
+                sim_revive(&r->net, i);
+                started[i] = true;
+            }
+        }
+        terrain_apply(tm, &r->net, ts);
+        if (r->net.now_ms < walk_ms && (int32_t)(r->net.now_ms - next_up) >= 0) {
+            terrain_send(r, crew, base, "up", k_up++, &refused);
+            next_up += TERRAIN_UP_MS;
+        }
+        if (r->net.now_ms < walk_ms && (int32_t)(r->net.now_ms - next_down) >= 0) {
+            terrain_send(r, base, crew, "down", k_down++, &refused);
+            next_down += TERRAIN_DOWN_MS;
+        }
+        traffic_step(r, &tr, SAMPLE_MS);
+        if (r->net.now_ms > walk_ms) {
+            continue;
+        }
+        ts = r->net.now_ms / 1000.0;
+        lmesh_route_info ri;
+        bool phys = terrain_connected(tm, &r->net, crew, base, ts, TERRAIN_MARGIN_DB);
+        bool up = sim_route_get(&r->net, crew, base, &ri);
+        bool down = sim_route_get(&r->net, base, crew, NULL);
+        bool route = up && down;
+        seconds++;
+        phys_out += phys ? 0u : 1u;
+        route_out += route ? 0u : 1u;
+        excess += phys && !route ? 1u : 0u;
+        false_route += route && !phys ? 1u : 0u;
+        if (up && ri.next_hop != last_next) {
+            switches += last_next != LMESH_ID_NONE ? 1u : 0u;
+            last_next = ri.next_hop;
+        }
+        if (tl) {
+            terrain_row(r, tl, crew, ts, phys, up, down, up ? ri.next_hop : LMESH_ID_NONE);
+        }
+    }
+    if (tl) {
+        fclose(tl);
+    }
+    finish_sampler(r, &tr.s);
+    metric_set(&r->m, M_WALK_S, seconds);
+    metric_set(&r->m, M_PHYS_OUT_S, phys_out);
+    metric_set(&r->m, M_ROUTE_OUT_S, route_out);
+    metric_set(&r->m, M_EXCESS_OUT_S, excess);
+    metric_set(&r->m, M_FALSE_ROUTE_S, false_route);
+    metric_set(&r->m, M_NEXT_HOP_SWITCHES, switches);
+    metric_set(&r->m, M_REFUSED_SUBMITS, refused);
+    metric_set(&r->m, M_ERROR_SIGMA_DB, r->terrain.sigma_db);
+}
+
 static const sim_scenario scenarios[] = {
     {"smoke", scen_smoke}, {"S1", scen_s1},   {"S2", scen_s2},   {"S3", scen_s3},   {"S4", scen_s4},
     {"S5", scen_s5},       {"S6", scen_s6},   {"S7", scen_s7},   {"S8", scen_s8},   {"S9", scen_s9},
     {"S10", scen_s10},     {"S11", scen_s11}, {"S12", scen_s12}, {"S13", scen_s13}, {"S14", scen_s14},
-    {"S12L", scen_s12_line},
+    {"S12L", scen_s12_line}, {"S15", scen_s15}, {"terrain", scen_terrain},
 };
 
 const sim_scenario *sim_find_scenario(const char *name)

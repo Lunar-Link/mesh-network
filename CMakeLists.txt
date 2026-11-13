@@ -39,10 +39,17 @@ lmesh_warnings(lmesh)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     enable_testing()
 
-    add_executable(lmesh_sim sim/sim_net.c sim/sim_topo.c sim/sim_check.c sim/sim_msg.c sim/sim_scenarios.c
-                             sim/sim_main.c)
+    add_executable(lmesh_sim sim/sim_net.c sim/sim_topo.c sim/sim_check.c sim/sim_msg.c sim/sim_terrain.c
+                             sim/sim_scenarios.c sim/sim_main.c)
     target_link_libraries(lmesh_sim PRIVATE lmesh)
+    if(NOT MSVC)
+        target_link_libraries(lmesh_sim PRIVATE m)
+    endif()
     lmesh_warnings(lmesh_sim)
+
+    add_executable(lmesh_console sim/sim_net.c sim/sim_topo.c sim/sim_console.c)
+    target_link_libraries(lmesh_console PRIVATE lmesh)
+    lmesh_warnings(lmesh_console)
 
     function(lmesh_add_test name)
         add_executable(${name} ${ARGN})
@@ -64,12 +71,42 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     lmesh_add_test(test_dedup tests/unit/test_dedup.c)
     lmesh_add_test(test_status tests/unit/test_status.c)
     lmesh_add_test(test_host tests/unit/test_host.c)
+
+    # The radio driver against a fake chip; the driver alone calls renamed library entry points the test can observe.
+    set_source_files_properties(src/radio/lr1121/lr1121.c PROPERTIES COMPILE_DEFINITIONS
+                                "lmesh_radio_rx=driver_radio_rx;lmesh_radio_tx_done=driver_radio_tx_done")
+    function(lr1121_add_test name)
+        add_executable(${name} tests/unit/test_lr1121.c src/radio/lr1121/lr1121.c)
+        target_link_libraries(${name} PRIVATE lmesh)
+        target_include_directories(${name} BEFORE PRIVATE tests/unit/lr1121_fake include src/radio/lr1121 lib/lmesh/src)
+        target_compile_definitions(${name} PRIVATE ${ARGN})
+        lmesh_warnings(${name})
+        add_test(NAME ${name} COMMAND ${name})
+    endfunction()
+    lr1121_add_test(test_lr1121 TEST_HF=0)
+    lr1121_add_test(test_lr1121_hf TEST_HF=1 LR1121_HF=1)
+    lr1121_add_test(test_lr1121_cw TEST_CW_MS=100 LR1121_TEST_CW_MS=100)
+
+    # The RYLR498 driver against a fake module behind the serial interface, renamed the same way.
+    set_source_files_properties(src/radio/rylr498/rylr498.c PROPERTIES COMPILE_DEFINITIONS
+                                "lmesh_radio_rx=driver_radio_rx;lmesh_radio_tx_done=driver_radio_tx_done")
+    add_executable(test_rylr498 tests/unit/test_rylr498.c src/radio/rylr498/rylr498.c)
+    target_link_libraries(test_rylr498 PRIVATE lmesh)
+    target_include_directories(test_rylr498 BEFORE PRIVATE tests/unit/rylr498_fake include)
+    lmesh_warnings(test_rylr498)
+    add_test(NAME test_rylr498 COMMAND test_rylr498)
+
     add_test(NAME sim_smoke COMMAND lmesh_sim smoke 1)
-    foreach(scenario S1 S2 S3 S4 S5 S6 S13 S7 S8 S9 S10 S11 S12 S14)
+    foreach(scenario S1 S2 S3 S4 S5 S6 S13 S7 S8 S9 S10 S11 S12 S14 S15)
         add_test(NAME sim_${scenario} COMMAND lmesh_sim ${scenario} 1)
     endforeach()
-    foreach(scenario S3 S6 S9 S11)
+    foreach(scenario S3 S6 S9 S11 S15)
         add_test(NAME sim_sweep_${scenario}
                  COMMAND lmesh_sim sweep ${scenario} 20 --known ${CMAKE_CURRENT_SOURCE_DIR}/sim/regression_seeds.txt)
     endforeach()
+
+    # Terrain run on a committed link table (terrain-sims/models/linktable.py --plan 0), median and with model error.
+    set(TERRAIN_TABLE ${CMAKE_CURRENT_SOURCE_DIR}/sim/terrain/plan0.txt)
+    add_test(NAME sim_terrain_plan0 COMMAND lmesh_sim --terrain ${TERRAIN_TABLE} terrain 1)
+    add_test(NAME sim_sweep_terrain_plan0 COMMAND lmesh_sim --terrain ${TERRAIN_TABLE} --sigma 8 --bias 6 sweep terrain 10)
 endif()

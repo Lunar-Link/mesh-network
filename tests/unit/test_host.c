@@ -111,10 +111,10 @@ static bool tail_untouched(const char *buf, size_t from, size_t size)
 static void test_basic_commands(void)
 {
     fresh();
-    EXPECT_CMD("id", "{\"ok\":true,\"id\":7,\"net\":1,\"station\":\"KD2ABC\"}\n");
-    EXPECT_CMD("id\r\n", "{\"ok\":true,\"id\":7,\"net\":1,\"station\":\"KD2ABC\"}\n");
-    EXPECT_CMD("id\n", "{\"ok\":true,\"id\":7,\"net\":1,\"station\":\"KD2ABC\"}\n");
-    EXPECT_CMD("  id  ", "{\"ok\":true,\"id\":7,\"net\":1,\"station\":\"KD2ABC\"}\n");
+    EXPECT_CMD("id", "{\"ok\":true,\"id\":7,\"net\":1,\"station\":\"KD2ABC\",\"phi_down\":8.00,\"phi_pause_ms\":0}\n");
+    EXPECT_CMD("id\r\n", "{\"ok\":true,\"id\":7,\"net\":1,\"station\":\"KD2ABC\",\"phi_down\":8.00,\"phi_pause_ms\":0}\n");
+    EXPECT_CMD("id\n", "{\"ok\":true,\"id\":7,\"net\":1,\"station\":\"KD2ABC\",\"phi_down\":8.00,\"phi_pause_ms\":0}\n");
+    EXPECT_CMD("  id  ", "{\"ok\":true,\"id\":7,\"net\":1,\"station\":\"KD2ABC\",\"phi_down\":8.00,\"phi_pause_ms\":0}\n");
     EXPECT_CMD("id x", FAILS("unexpected_argument"));
     EXPECT_CMD("", FAILS("empty"));
     EXPECT_CMD("\r\n", FAILS("empty"));
@@ -125,12 +125,12 @@ static void test_basic_commands(void)
     EXPECT_CMD("\tid", FAILS("unknown_command"));
 
     node.ident.station_id_len = 0;
-    EXPECT_CMD("id", "{\"ok\":true,\"id\":7,\"net\":1,\"station\":\"\"}\n");
+    EXPECT_CMD("id", "{\"ok\":true,\"id\":7,\"net\":1,\"station\":\"\",\"phi_down\":8.00,\"phi_pause_ms\":0}\n");
     memcpy(node.ident.station_id, "a\"b\\c\x01\xe9\x7f", 8);
     node.ident.station_id_len = 8;
-    EXPECT_CMD("id", "{\"ok\":true,\"id\":7,\"net\":1,\"station\":\"a\\\"b\\\\c\\u0001\\u00e9\x7f\"}\n");
+    EXPECT_CMD("id", "{\"ok\":true,\"id\":7,\"net\":1,\"station\":\"a\\\"b\\\\c\\u0001\\u00e9\x7f\",\"phi_down\":8.00,\"phi_pause_ms\":0}\n");
     node.ident.station_id_len = 200;
-    EXPECT_CMD("id", "{\"ok\":true,\"id\":7,\"net\":1,\"station\":\"a\\\"b\\\\c\\u0001\\u00e9\x7f\"}\n");
+    EXPECT_CMD("id", "{\"ok\":true,\"id\":7,\"net\":1,\"station\":\"a\\\"b\\\\c\\u0001\\u00e9\x7f\",\"phi_down\":8.00,\"phi_pause_ms\":0}\n");
 
     CHECK(lmesh_host_command(NULL, "id", out, sizeof out) == strlen(FAILS("invalid_argument")));
     CHECK(strcmp(out, FAILS("invalid_argument")) == 0);
@@ -139,6 +139,9 @@ static void test_basic_commands(void)
     expect_cmd_either("status", "{\"ok\":true}\n", UNIMPL, __LINE__);
     expect_cmd_either("status\r\n", "{\"ok\":true}\n", UNIMPL, __LINE__);
     EXPECT_CMD("status now", FAILS("unexpected_argument"));
+    EXPECT_CMD("ping", "{\"ok\":true}\n");
+    EXPECT_CMD("ping", FAILS("too_soon"));
+    EXPECT_CMD("ping now", FAILS("unexpected_argument"));
 }
 
 static void test_send(void)
@@ -262,8 +265,8 @@ static void fill_links(void)
     b->last_heard_ms = 400;
 }
 
-#define LINK_ROW1 "{\"id\":2,\"up\":true,\"bidir\":true,\"etx\":1.25,\"rxq\":200,\"txq\":180,\"rssi\":-91,\"snr\":-7,\"heard_ms\":12345}\n"
-#define LINK_ROW2 "{\"id\":5,\"up\":false,\"bidir\":false,\"etx\":\"inf\",\"rxq\":0,\"txq\":0,\"rssi\":-120,\"snr\":12,\"heard_ms\":400}\n"
+#define LINK_ROW1 "{\"id\":2,\"up\":true,\"bidir\":true,\"etx\":1.25,\"rxq\":200,\"txq\":180,\"rssi\":-91,\"snr\":-7,\"heard_ms\":12345,\"phi\":0.02,\"hello_at_ms\":0,\"hello_ms\":10000,\"hello_sd_ms\":5000}\n"
+#define LINK_ROW2 "{\"id\":5,\"up\":false,\"bidir\":false,\"etx\":\"inf\",\"rxq\":0,\"txq\":0,\"rssi\":-120,\"snr\":12,\"heard_ms\":400,\"phi\":0.02,\"hello_at_ms\":0,\"hello_ms\":10000,\"hello_sd_ms\":5000}\n"
 #define LINK_END "{\"end\":\"links\"}\n"
 #define LINK_END_T "{\"end\":\"links\",\"truncated\":true}\n"
 

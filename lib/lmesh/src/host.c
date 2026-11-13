@@ -86,6 +86,14 @@ static void jw_etx(jw *w, uint8_t v)
     jw_ch(w, (char)('0' + frac % 10u));
 }
 
+static void jw_centi(jw *w, uint32_t v)
+{
+    jw_u32(w, v / 100u);
+    jw_ch(w, '.');
+    jw_ch(w, (char)('0' + (v / 10u) % 10u));
+    jw_ch(w, (char)('0' + v % 10u));
+}
+
 static const char hex_digits[] = "0123456789abcdef";
 
 static void jw_hex(jw *w, const uint8_t *data, size_t n)
@@ -567,6 +575,9 @@ static void cmd_id(lmesh_node *node, jw *w)
     jw_ku(w, "net", node->ident.network_id);
     jw_key(w, "station");
     jw_esc(w, (const uint8_t *)node->ident.station_id, slen, true);
+    jw_key(w, "phi_down");
+    jw_centi(w, LMESH_PHI_THRESHOLD);
+    jw_ku(w, "phi_pause_ms", LMESH_PHI_PAUSE_MS);
     jw_str(w, "}\n");
 }
 
@@ -575,6 +586,20 @@ static void cmd_status(lmesh_node *node, jw *w)
     lmesh_err err = lmesh_status_now(node);
     if (err == LMESH_OK) {
         jw_str(w, "{\"ok\":true}\n");
+    } else {
+        reply_fail(w, err_reason(err));
+    }
+}
+
+static void cmd_ping(lmesh_node *node, jw *w)
+{
+    lmesh_err err = lmesh_hello_ping(node);
+    if (err == LMESH_OK) {
+        jw_str(w, "{\"ok\":true}\n");
+    } else if (err == LMESH_ERR_STATE) {
+        reply_fail(w, "too_soon");
+    } else if (err == LMESH_ERR_FULL) {
+        reply_fail(w, "queue_full");
     } else {
         reply_fail(w, err_reason(err));
     }
@@ -655,6 +680,11 @@ static void dump_links(lmesh_node *node, jw *w)
         jw_key(w, "snr");
         jw_i32(w, r->snr);
         jw_ku(w, "heard_ms", r->last_heard_ms);
+        jw_key(w, "phi");
+        jw_centi(w, r->phi100);
+        jw_ku(w, "hello_at_ms", r->last_hello_ms);
+        jw_ku(w, "hello_ms", r->hello_interval_ms);
+        jw_ku(w, "hello_sd_ms", r->hello_sd_ms);
         jw_str(w, "}\n");
         row_finish(&d, i + 1 == n);
     }
@@ -812,6 +842,8 @@ static const char *run_command(lmesh_node *node, jw *w, cursor *c)
         simple = dump_stats;
     } else if (tok_is(&cmd, "status")) {
         simple = cmd_status;
+    } else if (tok_is(&cmd, "ping")) {
+        simple = cmd_ping;
     } else {
         return "unknown_command";
     }

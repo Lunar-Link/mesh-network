@@ -1,4 +1,4 @@
-/* Neighbor table: liveness, HELLO loss tracking, bidirectional ETX. SPEC.md Section 7. */
+/* Neighbor table: phi accrual liveness, HELLO loss tracking, bidirectional ETX. SPEC.md Section 7. */
 #ifndef LMESH_NEIGHBOR_H
 #define LMESH_NEIGHBOR_H
 
@@ -9,6 +9,10 @@ lmesh_neighbor *lmesh_neighbor_touch(lmesh_node *node, lmesh_node_id id, int16_t
 void lmesh_neighbor_hello_seen(lmesh_node *node, lmesh_neighbor *n, uint8_t hello_seq, bool listed_us,
                                uint8_t their_rx_quality);
 bool lmesh_neighbor_restart_check(lmesh_node *node, lmesh_neighbor *n, uint8_t hello_seq, uint16_t own_seqno);
+void lmesh_neighbor_hello_timing(lmesh_node *node, lmesh_neighbor *n, bool periodic);
+uint32_t lmesh_neighbor_silence_limit_ms(const lmesh_neighbor *n);
+uint16_t lmesh_neighbor_phi100(const lmesh_node *node, const lmesh_neighbor *n);
+uint16_t lmesh_phi100(uint32_t elapsed_ms, uint32_t mean_ms, uint32_t sd_ms);
 void lmesh_neighbor_link_result(lmesh_node *node, lmesh_node_id id, bool ok);
 void lmesh_neighbor_tick(lmesh_node *node);
 uint8_t lmesh_neighbor_etx8(const lmesh_neighbor *n);

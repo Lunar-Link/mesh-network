@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include "hello.h"
+#include "link.h"
 #include "neighbor.h"
 #include "route.h"
 
@@ -446,6 +447,67 @@ static void test_stale_echo(void)
     CHECK(lmesh_route_next_hop(&node_b, 30) == 20);
 }
 
+static int queued_hello_flags(lmesh_node *node)
+{
+    int flags = -1;
+    for (size_t i = 0; i < LMESH_TXQ_SIZE; i++) {
+        lmesh_txq_entry *e = &node->link.queue[i];
+        if (e->used && e->owner == LMESH_OWNER_HELLO) {
+            flags = e->frame.buf[LMESH_HEADER_LEN + 3];
+            e->used = false;
+        }
+    }
+    return flags;
+}
+
+static void test_flags_and_ping(void)
+{
+    setup(&node_a, 81, 2500);
+    memset(node_a.link.queue, 0, sizeof node_a.link.queue);
+    node_a.now_ms = 3500;
+    lmesh_hello_tick(&node_a);
+    CHECK(queued_hello_flags(&node_a) == LMESH_HELLO_PERIODIC);
+
+    node_a.now_ms = 4000;
+    lmesh_hello_trigger(&node_a);
+    node_a.now_ms = node_a.hello.trigger_at_ms;
+    lmesh_hello_tick(&node_a);
+    CHECK(queued_hello_flags(&node_a) == LMESH_HELLO_TRIGGERED);
+
+    uint8_t seq = node_a.nbr.hello_seq;
+    uint32_t next = node_a.hello.next_ms;
+    node_a.now_ms = 5000;
+    CHECK(lmesh_hello_ping(&node_a) == LMESH_OK);
+    CHECK(queued_hello_flags(&node_a) == LMESH_HELLO_PING);
+    CHECK(node_a.nbr.hello_seq == (uint8_t)(seq + 1u) && node_a.hello.next_ms == next);
+    CHECK(node_a.hello.last_ping_ms == 5000);
+    node_a.now_ms = 5000 + LMESH_TRIGGER_MIN_GAP_MS - 1;
+    CHECK(lmesh_hello_ping(&node_a) == LMESH_ERR_STATE);
+    CHECK(queued_hello_flags(&node_a) == -1);
+    node_a.now_ms = 5000 + LMESH_TRIGGER_MIN_GAP_MS;
+    CHECK(lmesh_hello_ping(&node_a) == LMESH_OK);
+    CHECK(queued_hello_flags(&node_a) == LMESH_HELLO_PING);
+    CHECK(lmesh_hello_ping(NULL) == LMESH_ERR_ARG);
+
+    setup(&node_b, 82, 2500);
+    uint8_t buf[LMESH_MAX_PAYLOAD];
+    static const adv_entry self_only[] = {{81, 10, 0}};
+    node_b.now_ms = 6000;
+    deliver(&node_b, 81, buf, hello_pkt(buf, 1, 10, LMESH_HELLO_PERIODIC, 82, self_only, 1));
+    lmesh_neighbor *n = lmesh_neighbor_find(&node_b, 81);
+    CHECK(n && n->up && n->periodic_valid && n->last_periodic_ms == 6000 && n->phi_count == 0);
+    node_b.hello.trigger_pending = false;
+
+    node_b.now_ms = 9000;
+    deliver(&node_b, 81, buf, hello_pkt(buf, 2, 10, LMESH_HELLO_PING, 82, self_only, 1));
+    CHECK(node_b.hello.trigger_pending);
+    CHECK(n->phi_count == 0 && n->last_periodic_ms == 6000 && n->last_hello_ms == 9000);
+
+    node_b.now_ms = 16500;
+    deliver(&node_b, 81, buf, hello_pkt(buf, 3, 10, LMESH_HELLO_PERIODIC | LMESH_HELLO_TRIGGERED, 82, self_only, 1));
+    CHECK(n->phi_count == 1 && n->phi_interval_ms[0] == 10500u && n->phi_mean_ms == 10500u);
+}
+
 int main(void)
 {
     test_encode_alone();
@@ -458,6 +520,7 @@ int main(void)
     test_complete_hello();
     test_wraparound();
     test_stale_echo();
+    test_flags_and_ping();
     printf("%s (%d checks)\n", failures ? "FAILED" : "ok", checks);
     return failures ? 1 : 0;
 }
