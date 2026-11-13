@@ -65,6 +65,46 @@ python3 -B tests/interface/test_console_terrain.py
 
 ## Interface
 
+### Live terrain node placement
+
+Manual terrain placement requires **Node.js 18+** for server-side terrain calculations. Python still serves the interface, and the normal graph/table simulator can run without Node. No npm packages or internet connection are needed for placement after checkout. Source attribution and assumptions are in `terrain/ATTRIBUTION.md`.
+
+From the repository root:
+
+```
+cmake --build build
+python3 interface/serve.py --sim --nodes 8 --speed 5 --port 8001
+```
+
+Open `http://localhost:8001/?sim` and choose **Network → View → Terrain placement**. The initial view is a preview; **Enable live placement**, dragging a node and releasing it, or **Apply position** starts the physical placement medium. Edit a node's projected X/Y offsets from the base and mast height in the form as an alternative to dragging. Drag the background to pan, use the zoom controls or wheel, and **Fit nodes** to recenter. Map pan/zoom is keyboard accessible. **Connect here** selects the node whose reports and messages the interface receives.
+
+Each edit sends only positions, mast heights and radio settings to the server. The server validates every node and calculates both directions of every pair using the actual Malapert elevation grid and the vendored R2/P.526 model. It sends one validated, complete `@placement` transaction to the C console. The console applies the new loss, RSSI, SNR and margins between clock advances, preserving all nodes' route tables, message IDs and stored messages. It does not select routes on behalf of the mesh: HELLO exchange, liveness detection, retries, receipts, and the routing algorithm respond to the changed medium over simulated time. An edit can apply while paused, but discovery and rerouting require the clock to run or step.
+
+The client serializes rapid edits, retaining the newest pending position. Generation and revision checks reject stale edits or edits to a restarted network. Failed validation or a rejected C transaction leaves the existing medium intact. Multiple browser clients share the server's committed placement; **Reload current placement** recovers after a stale-edit rejection. Restarting the simulator clears manual placement. When entering from a recorded terrain scenario, current positions are captured, automatic movement stops, and pending relays deploy immediately; explicitly killed nodes and existing cuts/outage schedules remain respected.
+
+Dashed links predict terrain margin, using the weaker direction and the same red/yellow/green thresholds as the graph. Solid lines show neighbor reports and their ETX, and may lag a move. Blue highlights the connected node's reported first hop toward the selected node; the route text gives that next hop. Predictions are gray while an edit is pending. The optional 60 × 60 coverage overlay predicts one-hop margin from the selected online node to a 1.5 m receiver over the visible map; it is refreshed after placement, selection and view changes. Extra packet loss and random/manual outages still affect the C medium. A route or green prediction is not a delivery receipt.
+
+**Export** saves node positions, mast heights and radio settings. **Import** applies a MESH `lmesh-placement-v2` file with the same node IDs. Browser reloads can retrieve the committed server placement while that server remains running. Restarting the server creates a new network; export first if you want to preserve a layout.
+
+For a reproducible routing demonstration, start with **four nodes**, then import `sim/terrain/placement-diamond.json`. Allow discovery to settle, select node 4, and note the reported next hop from node 1. The direct 1–4 path is terrain-blocked; nodes 2 and 3 each offer a viable relay path. Move the current next-hop relay to map offsets **X = 9000, Y = 9000**, run/step the clock, and watch the next hop change to the other relay. Send to node 4 to confirm delivery. Moving node 4 to those offsets creates a partition; send an unexpired message, restore node 4 to **X = -1500, Y = -750**, and observe its automatic delivery. No messages or nodes are reset by either move.
+
+Verification:
+
+```
+python3 -B tests/interface/test_placement.py -v
+ctest --test-dir build --output-on-failure
+```
+
+The integration suite runs real DEM predictions through the Python bridge and C library: alternate-path rerouting across five seeds, receipt-confirmed delivery before/after moves, partition storage and exactly-once recovery, malformed/stale updates, atomic C rejection, 16-node matrices, radio/mast changes, manual cuts, random-outage healing, extra loss, track freezing, restart fencing, and coverage/image generation. CTest includes it when Python and Node are available.
+
+An optional browser test uses `playwright-core` and an installed Chrome (neither is a runtime dependency). It must use a dedicated four-node server: it imports/repositions nodes and advances that test network. Launch that server on port 8015, then run:
+
+```
+node tests/interface/placement-browser.cjs --playwright-module /path/to/playwright-core
+```
+
+The browser test drags a real canvas marker, verifies next-hop changes and message delivery, tests queued-message recovery, delays an HTTP response to verify rapid-edit ordering, checks validation and SVG visibility, verifies coverage painting, and saves a screenshot to `/private/tmp/mesh-placement-verified.png`. Use `--url`, `--chrome`, and `--screenshot` to override the local defaults.
+
 The main view keeps connection status, a short summary of this node, the network map, and message send/receive in view. Message type, priority, and lifetime are under **Message options**. Detailed node, neighbor, and route tables, sent history, and the console are under **Diagnostics and raw console**. The console can show plain-language explanations or raw protocol output. Resting the pointer on a dotted-underlined term shows what it means.
 
 **Ping neighbors** (in **This node**) broadcasts a HELLO beacon at once; neighbors that hear it answer, and are marked **answered** in the neighbor table. Each neighbor also shows φ, the node's suspicion that it has gone silent ([SPEC.md](../SPEC.md) Section 7.3), recomputed every second so it climbs live; the node drops the neighbor at 8.

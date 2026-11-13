@@ -1,0 +1,11 @@
+{
+  "format": "lmesh-placement-v2",
+  "note": "Four stationary Malapert nodes. Direct 1-4 is blocked; both relays provide alternate paths. Move the current next-hop relay away to test actual protocol rerouting.",
+  "nodes": [
+    {"id": 1, "x": 4387.5, "y": 121632.5, "h": 1.5},
+    {"id": 2, "x": 3387.5, "y": 121882.5, "h": 1.5},
+    {"id": 3, "x": 3637.5, "y": 121882.5, "h": 1.5},
+    {"id": 4, "x": 2887.5, "y": 120882.5, "h": 1.5}
+  ],
+  "settings": {"power": 22, "attenuation": 0}
+}

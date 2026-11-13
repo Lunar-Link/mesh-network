@@ -1,0 +1,28 @@
+.placement-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; color: var(--muted); font-size: 12px; }
+.placement-bar label { display: flex; gap: 5px; align-items: center; }
+.placement-bar input[type=number] { width: 68px; }
+.placement-map-wrap { position: relative; height: clamp(320px, 50vh, 600px); border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: #111820; }
+#placement-map { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.placement-scale { position: absolute; left: 10px; bottom: 10px; padding: 3px 7px; background: #111820dc; color: white; font: 12px var(--mono); pointer-events: none; }
+.placement-form { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin: 10px 0; }
+.placement-form label { display: flex; flex-direction: column; gap: 3px; color: var(--muted); font-size: 12px; }
+.placement-form input { width: 95px; }
+.placement-note, #placement-status, #placement-route { font-size: 12px; margin: 8px 0; }
+.placement-note { color: var(--muted); }
+.placement-note a { color: var(--accent); }
+.placement-info { position: relative; display: inline-block; margin-top: 8px; }
+.placement-info > button { font-size: 12px; color: var(--muted); }
+.placement-info-tooltip { display: none; position: absolute; top: 100%; left: 0; z-index: 55; width: min(340px, calc(100vw - 48px)); padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--text); box-shadow: 0 4px 14px #0004; font-size: 12px; line-height: 1.5; }
+.placement-info:hover .placement-info-tooltip, .placement-info:focus-within .placement-info-tooltip, .placement-info.is-open .placement-info-tooltip { display: block; }
+.placement-info-tooltip p, .placement-info-tooltip #placement-status { margin: 0; }
+.placement-info-tooltip p + p { margin-top: 8px; color: var(--muted); }
+.placement-info-tooltip { max-height: min(440px, 60vh); overflow-y: auto; }
+.placement-info-tooltip a { color: var(--accent); }
+#placement-error { font-size: 12px; color: var(--poor); margin: 8px 0; }
+.placement-details { margin-top: 10px; border-top: 1px solid var(--line); padding-top: 8px; }
+.placement-details > summary { color: var(--muted); font-size: 12px; cursor: pointer; }
+.placement-details > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.placement-details-content { max-height: min(420px, 45vh); overflow: auto; padding-right: 6px; }
+.placement-pairs { overflow: auto; max-height: 220px; }
+.placement-pairs th { position: sticky; top: 0; background: var(--panel); }
+.dashboard-card.is-maximized .placement-map-wrap { height: 65vh; }

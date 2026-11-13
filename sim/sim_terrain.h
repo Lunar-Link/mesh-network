@@ -15,6 +15,7 @@ typedef struct sim_terrain_node {
     char name[SIM_TERRAIN_NODE_NAME];
     double start_s;
     bool mobile;
+    double height;
     uint32_t xy_off;
     uint32_t xy_n;
     uint32_t dist_off;

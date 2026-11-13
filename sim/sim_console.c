@@ -8,7 +8,7 @@
 #include "sim_terrain.h"
 
 #define NETWORK_ID 1
-#define LINE_MAX 512
+#define LINE_MAX 32768
 #define OUT_MAX 16384
 
 static sim_net net;
@@ -18,9 +18,36 @@ static sim_terrain terrain;
 static bool started[SIM_MAX_NODES], manual_off[SIM_MAX_NODES];
 static bool cut[SIM_MAX_NODES][SIM_MAX_NODES];
 static unsigned extra_loss;
+typedef struct placement_pair {
+    double ab, ba;
+    uint8_t loss_ab, loss_ba;
+    int16_t rssi_ab, rssi_ba;
+    int8_t snr_ab, snr_ba;
+} placement_pair;
+static placement_pair placed[SIM_MAX_NODES][SIM_MAX_NODES];
+static bool placement_active;
+
+static void apply_placement(void)
+{
+    for (int a = 0; a < net.count; a++) {
+        for (int b = a + 1; b < net.count; b++) {
+            const placement_pair *p = &placed[a][b];
+            unsigned ab = 100u - ((100u - p->loss_ab) * (100u - extra_loss) + 50u) / 100u;
+            unsigned ba = 100u - ((100u - p->loss_ba) * (100u - extra_loss) + 50u) / 100u;
+            sim_set_link(&net, a, b, !cut[a][b] && (ab < 100u || ba < 100u), (uint8_t)ab);
+            sim_set_loss_dir(&net, b, a, (uint8_t)ba);
+            sim_set_signal(&net, a, b, p->rssi_ab, p->snr_ab);
+            sim_set_signal(&net, b, a, p->rssi_ba, p->snr_ba);
+        }
+    }
+}
 
 static void apply_terrain(void)
 {
+    if (placement_active) {
+        apply_placement();
+        return;
+    }
     double ts = net.now_ms / 1000.0;
     for (int i = 0; i < net.count; i++) {
         if (!started[i] && ts >= terrain.node[i].start_s) {
@@ -47,7 +74,7 @@ static void apply_terrain(void)
 
 static void advance(uint32_t ms)
 {
-    if (!terrain.loaded) {
+    if (placement_active || !terrain.loaded) {
         sim_step(&net, ms);
         return;
     }
@@ -65,6 +92,7 @@ static int usage(void)
     fprintf(stderr, "usage: lmesh_console [line|ring|diamond|random] [nodes] [seed] [loss_pct]\n"
                     "       lmesh_console terrain <table> [seed] [extra_loss_pct]\n"
                     "stdin: line protocol commands for the attached node, or\n"
+                    "  @placement <count> <8 values per pair, in ascending node-pair order>\n"
                     "  @t <ms>  @kill <id>  @revive <id>  @cut <a> <b>  @join <a> <b> [loss_pct]  @attach <id>  @topo\n");
     return 2;
 }
@@ -135,13 +163,14 @@ static void print_topo(void)
     for (int i = 0; i < net.count; i++) {
         printf(i ? ",%u" : "%u", net.nodes[i].ident.id);
     }
-    if (terrain.loaded) {
+    if (terrain.loaded || placement_active) {
         printf("],\"terrain\":true,\"margins\":[");
         first = true;
         double ts = net.now_ms / 1000.0;
         for (int a = 0; a < net.count; a++) {
             for (int b = a + 1; b < net.count; b++) {
-                double ab = terrain_margin_db(&terrain, a, b, ts), ba = terrain_margin_db(&terrain, b, a, ts);
+                double ab = placement_active ? placed[a][b].ab : terrain_margin_db(&terrain, a, b, ts);
+                double ba = placement_active ? placed[a][b].ba : terrain_margin_db(&terrain, b, a, ts);
                 printf(first ? "[%u,%u," : ",[%u,%u,", net.nodes[a].ident.id, net.nodes[b].ident.id);
                 if (isfinite(ab) && isfinite(ba)) {
                     printf("%.3f,%.3f,", ab, ba);
@@ -152,29 +181,80 @@ static void print_topo(void)
                 first = false;
             }
         }
+        if (terrain.loaded && !placement_active) {
+            printf("],\"positions\":[");
+            for (int i = 0; i < net.count; i++) {
+                double x, y;
+                terrain_position(&terrain, i, ts, &x, &y);
+                printf(i ? ",[%u,%.3f,%.3f,%.3f]" : "[%u,%.3f,%.3f,%.3f]", net.nodes[i].ident.id, x, y, terrain.node[i].height);
+            }
+        }
     }
     puts("]}");
 }
 
+static bool placement_command(char **argv, int argc)
+{
+    char *end = NULL;
+    long n = argc >= 2 ? strtol(argv[1], &end, 10) : 0;
+    if (n != net.count || !end || *end || argc != 2 + net.count * (net.count - 1) * 4) {
+        return false;
+    }
+    placement_pair next[SIM_MAX_NODES][SIM_MAX_NODES] = {{{0}}};
+    int k = 2;
+    for (int a = 0; a < net.count; a++) {
+        for (int b = a + 1; b < net.count; b++) {
+            double v[8];
+            for (int i = 0; i < 8; i++) {
+                v[i] = strtod(argv[k++], &end);
+                double lo = i < 2 ? -400 : i < 4 ? 0 : i < 6 ? -200 : -30;
+                double hi = i < 2 ? 400 : i < 4 ? 100 : i < 6 ? 30 : 12;
+                if (end == argv[k - 1] || *end || !isfinite(v[i]) || v[i] < lo || v[i] > hi || (i >= 2 && floor(v[i]) != v[i])) {
+                    return false;
+                }
+            }
+            next[a][b] = (placement_pair){v[0], v[1], (uint8_t)v[2], (uint8_t)v[3], (int16_t)v[4], (int16_t)v[5], (int8_t)v[6], (int8_t)v[7]};
+        }
+    }
+    memcpy(placed, next, sizeof placed);
+    if (!placement_active) {
+        for (int i = 0; i < net.count; i++) {
+            if (terrain.loaded && !started[i] && !manual_off[i]) {
+                sim_revive(&net, i);
+            }
+            started[i] = true;
+        }
+    }
+    placement_active = true;
+    net.lora = (sim_lora){.sf = 9, .cr = 1, .preamble = 12, .bw_hz = 125000};
+    apply_placement();
+    return true;
+}
+
 static void control(char *line)
 {
-    char *argv[4] = {NULL, NULL, NULL, NULL};
+    char *argv[1024] = {NULL};
     int argc = 0;
-    for (char *tok = strtok(line, " "); tok && argc < 4; tok = strtok(NULL, " ")) {
+    for (char *tok = strtok(line, " "); tok && argc < 1024; tok = strtok(NULL, " ")) {
         argv[argc++] = tok;
     }
     const char *cmd = argv[0];
+    if (!cmd) {
+        return;
+    }
     int a = argc > 1 ? node_arg(argv[1]) : -1;
     int b = argc > 2 ? node_arg(argv[2]) : -1;
 
-    if (strcmp(cmd, "@t") == 0) {
+    if (strcmp(cmd, "@placement") == 0) {
+        reply(placement_command(argv, argc), "bad_placement");
+    } else if (strcmp(cmd, "@t") == 0) {
         long ms = argc > 1 ? strtol(argv[1], NULL, 10) : 0;
         if (ms > 0 && ms <= 3600000L) {
             advance((uint32_t)ms);
         }
     } else if (strcmp(cmd, "@topo") == 0) {
         print_topo();
-    } else if (strcmp(cmd, "@loss") == 0 && terrain.loaded) {
+    } else if (strcmp(cmd, "@loss") == 0 && (terrain.loaded || placement_active)) {
         char *end = NULL;
         long loss = argc == 2 ? strtol(argv[1], &end, 10) : -1;
         if (loss < 0 || loss > 100 || !end || end == argv[1] || *end != '\0') {
@@ -208,7 +288,7 @@ static void control(char *line)
         reply(true, NULL);
     } else if (strcmp(cmd, "@join") == 0) {
         cut[a][b] = cut[b][a] = false;
-        if (terrain.loaded) {
+        if (terrain.loaded || placement_active) {
             apply_terrain();
         } else {
             long loss = argc > 3 ? strtol(argv[3], NULL, 10) : 0;
@@ -232,6 +312,7 @@ int main(int argc, char **argv)
     }
 
     sim_init(&net, seed);
+    extra_loss = (unsigned)loss;
     sim_topo t;
     if (use_terrain) {
         char error[256];

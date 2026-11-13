@@ -117,5 +117,10 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
     if(Python3_Interpreter_FOUND)
         add_test(NAME console_terrain COMMAND ${Python3_EXECUTABLE} -B
                  ${CMAKE_CURRENT_SOURCE_DIR}/tests/interface/test_console_terrain.py --console $<TARGET_FILE:lmesh_console>)
+        find_program(NODE_EXECUTABLE node)
+        if(NODE_EXECUTABLE)
+            add_test(NAME placement_integration COMMAND ${Python3_EXECUTABLE} -B
+                     ${CMAKE_CURRENT_SOURCE_DIR}/tests/interface/test_placement.py --console $<TARGET_FILE:lmesh_console>)
+        endif()
     endif()
 endif()

@@ -6,6 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Lunar Mesh Node</title>
 <link rel="stylesheet" href="dashboard.css">
+<link rel="stylesheet" href="placement.css">
 <script src="link-quality.js"></script>
 <link rel="icon" type="image/x-icon" href="/favicon.ico">
 <script>
@@ -1005,6 +1006,7 @@ function renderKnown() {
    Resting the pointer on a node dims everything not directly linked to it. */
 let mapAdj = new Map(), mapHover = null;
 function renderMap() {
+  if (window.meshPlacement?.render()) return;
   const svg = $("map");
   const self = st.ident && Number.isInteger(st.ident.id) ? st.ident.id : null;
   const info = new Map(st.nodes.map(n => [n.node, n]));
@@ -1155,6 +1157,7 @@ function onSimStatus(s) {
   }
   renderSimCtl();
   $("sim-rt").querySelector('[value="terrain"]').disabled = !s.args.terrain_available;
+  window.meshPlacement?.onStatus(s);
   $("sim-rn").disabled = s.args.topo === "terrain";
   if (s.args.topo === "terrain") $("sim-rn").value = s.args.nodes;
 }
@@ -1453,6 +1456,7 @@ $("btn-close").onclick = () => transport && transport.close();
   if (simAvailable && new URLSearchParams(location.search).has("sim")) connectSim();
 })();
 </script>
+<script src="placement.js"></script>
 <script src="dashboard.js"></script>
 </body>
 </html>

@@ -127,6 +127,7 @@ bool terrain_load(sim_terrain *t, const char *path, char *err, size_t err_max)
                 snprintf(t->node[i].name, sizeof t->node[i].name, "%.15s", name);
                 t->node[i].start_s = start;
                 t->node[i].mobile = mobile != 0.0;
+                t->node[i].height = h;
             }
         } else if (strcmp(w, "xy") == 0 && have_nodes) {
             int i = 0;

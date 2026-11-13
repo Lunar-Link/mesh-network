@@ -12,6 +12,7 @@ import time
 from collections import deque
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from placement import PlacementModel, finite
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_EXE = HERE.parent / "build" / ("lmesh_console.exe" if sys.platform == "win32" else "lmesh_console")
@@ -57,6 +58,10 @@ class Sim:
         self.generation = 0
         self.proc = None
         self.restarting = False
+        self.placement_model = None
+        self.placement = None
+        self.placement_revision = 0
+        self.closed = False
         self.speed = min(max(speed, SPEED_MIN), SPEED_MAX)
         self.paused = False
         self.step_ms = 0
@@ -68,6 +73,8 @@ class Sim:
     # Process
 
     def _start(self, topo, nodes, seed, loss):
+        self.placement = None
+        self.placement_revision += 1
         self.args = {"topo": topo, "nodes": nodes, "seed": seed, "loss": loss, "terrain_available": bool(self.terrain)}
         self.owners = deque()
         source = str(self.terrain) if topo == "terrain" else str(nodes)
@@ -84,7 +91,8 @@ class Sim:
         self.schedule = []
         self.last_topo = 0.0
         self.generation += 1
-        threading.Thread(target=self._read, args=(self.proc,), daemon=True).start()
+        self.reader_thread = threading.Thread(target=self._read, args=(self.proc,), daemon=True)
+        self.reader_thread.start()
         self._refresh_topo()
         if topo == "terrain" and (not self.topo or not self.topo.get("terrain")):
             self.proc.terminate()
@@ -106,6 +114,10 @@ class Sim:
                 old.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 old.kill()
+                old.wait()
+            self.reader_thread.join(timeout=2)
+            old.stdin.close()
+            old.stdout.close()
             self.step_ms = 0
             self.rng = random.Random(seed)
             self._start(topo, nodes, seed, loss)
@@ -181,6 +193,7 @@ class Sim:
                 "sim": True, "generation": self.generation, "args": self.args,
                 "speed": self.speed, "paused": self.paused, "sim_ms": self.sim_ms, "loss": self.loss,
                 "chaos": self.chaos, "down": down,
+                "placement": self.placement, "placement_revision": self.placement_revision,
                 "links_down": [[a, b] for (a, b) in self.chaos_links],
                 "schedule": [{k: e[k] for k in ("id", "node", "start_ms", "dur_ms", "every_ms")} |
                              {"down": e["down"], "next_ms": self._next_transition(e, self.sim_ms)}
@@ -233,7 +246,7 @@ class Sim:
         last = time.monotonic()
         carry = 0.0
         last_status = 0.0
-        while True:
+        while not self.closed:
             time.sleep(TICK_S)
             now = time.monotonic()
             with self.ctl:
@@ -382,7 +395,7 @@ class Sim:
     def set_loss(self, pct):
         with self.ctl:
             self.loss = min(max(int(pct), 0), 100)
-            if self.args["topo"] == "terrain":
+            if self.args["topo"] == "terrain" or self.placement:
                 self.write(f"@loss {self.loss}")
                 self._refresh_topo()
                 return
@@ -406,6 +419,8 @@ class Sim:
             self.step_ms += int(min(max(float(seconds), 0.001), STEP_MAX_S) * 1000)
 
     def control(self, req):
+        if not isinstance(req, dict):
+            raise ValueError("control request must be an object")
         op = req.get("op")
         if op == "speed":
             self.set_speed(req["value"])
@@ -415,6 +430,8 @@ class Sim:
             self.step(req["seconds"])
         elif op == "loss":
             self.set_loss(req["value"])
+        elif op == "placement":
+            self.set_placement(req)
         elif op == "chaos":
             self.set_chaos(**{k: v for k, v in req.items() if k != "op"})
         elif op == "sched_add":
@@ -439,6 +456,85 @@ class Sim:
             self._refresh_topo()
         self.broadcast_status()
 
+    def model(self):
+        with self.ctl:
+            if self.placement_model is None:
+                self.placement_model = PlacementModel()
+            return self.placement_model
+
+    def placement_draft(self):
+        with self.ctl:
+            model = self.model()
+            if self.placement:
+                draft = self.placement
+            else:
+                self._refresh_topo()
+                t = model.meta["terrain"]
+                positions = {r[0]: r for r in (self.topo or {}).get("positions", [])}
+                nodes = []
+                for i, nid in enumerate(sorted(self.all_ids)):
+                    if nid in positions:
+                        _, x, y, h = positions[nid]
+                    elif i == 0:
+                        x, y, h = t["bx"], t["by"], 1.5
+                    else:
+                        angle = 2 * math.pi * (i - 1) / max(1, len(self.all_ids) - 1)
+                        x, y, h = t["bx"] + 1600 * math.cos(angle), t["by"] + 1600 * math.sin(angle), 1.5
+                    nodes.append({"id": nid, "x": x, "y": y, "h": h})
+                draft = {"nodes": nodes, "settings": {"power": 22, "attenuation": 0}}
+            return {"ok": True, "meta": model.meta, "generation": self.generation,
+                    "revision": self.placement_revision, "active": bool(self.placement), **draft}
+
+    def set_placement(self, req):
+        with self.ctl:
+            if type(req.get("generation")) is not int or type(req.get("base_revision")) is not int or req.get("generation") != self.generation or req.get("base_revision") != self.placement_revision:
+                raise ValueError("placement changed or network restarted; reload the current placement")
+            model = self.model()
+            nodes, settings = model.validate(req.get("nodes"), req.get("settings"), self.all_ids)
+            pairs = model.ask({"op": "layout", "nodes": nodes, "settings": settings})["pairs"]
+            values = []
+            for pair in pairs:
+                a, b = pair["ab"], pair["ba"]
+                values.extend([a["margin"], b["margin"], a["loss"], b["loss"], a["rssi"], b["rssi"], a["snr"], b["snr"]])
+            line = "@placement " + str(len(nodes)) + " " + " ".join(format(v, ".9g") for v in values)
+            reply = self.ask(line)
+            if not reply or not reply.get("ok"):
+                raise ValueError("console rejected placement; rebuild with cmake --build build")
+            self.placement_revision += 1
+            self.placement = {"nodes": nodes, "settings": settings, "pairs": pairs, "revision": self.placement_revision}
+            self._refresh_topo()
+
+    def coverage(self, req):
+        if not isinstance(req, dict):
+            raise ValueError("coverage request must be an object")
+        # Snapshot under ctl, then compute outside it so coverage never blocks the virtual clock.
+        with self.ctl:
+            if not self.placement or req.get("generation") != self.generation or req.get("revision") != self.placement_revision:
+                raise ValueError("coverage request is for an old placement")
+            node = next((n for n in self.placement["nodes"] if n["id"] == req.get("node")), None)
+            if node is None:
+                raise ValueError("no such node")
+            b = req.get("bounds", {})
+            if not isinstance(b, dict):
+                raise ValueError("coverage bounds must be an object")
+            bounds = {"x": finite(b.get("x"), -100000, 100000), "y": finite(b.get("y"), 0, 250000),
+                      "width": finite(b.get("width"), 100, 100000), "height": finite(b.get("height"), 100, 100000)}
+            settings = self.placement["settings"]
+            generation, revision = self.generation, self.placement_revision
+        result = self.model().ask({"op": "coverage", "node": node, "settings": settings, "bounds": bounds})
+        return {**result, "generation": generation, "revision": revision, "node": node["id"], "bounds": bounds}
+
+    def close(self):
+        self.closed = True
+        self.restarting = True
+        self.proc.terminate()
+        self.proc.wait(timeout=3)
+        self.reader_thread.join(timeout=2)
+        self.proc.stdin.close()
+        self.proc.stdout.close()
+        if self.placement_model:
+            self.placement_model.close()
+
 
 def make_handler(sim):
     class Handler(SimpleHTTPRequestHandler):
@@ -458,9 +554,26 @@ def make_handler(sim):
 
         def _body(self):
             length = int(self.headers.get("Content-Length", 0))
+            if not 0 <= length <= 131072:
+                raise ValueError("request is too large")
             return self.rfile.read(length).decode("utf-8", "replace")
 
         def do_GET(self):
+            if self.path in ("/sim/placement", "/sim/placement/map") and sim is not None:
+                try:
+                    if self.path == "/sim/placement":
+                        self._json(200, sim.placement_draft())
+                    else:
+                        import base64
+                        body = base64.b64decode(sim.model().ask({"op": "map"})["png"])
+                        self.send_response(200)
+                        self.send_header("Content-Type", "image/png")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                except (ValueError, KeyError, TypeError) as error:
+                    self._json(400, {"ok": False, "reason": str(error)})
+                return
             if self.path == "/sim/info":
                 if sim is None:
                     self._json(404, {"sim": False})
@@ -473,10 +586,14 @@ def make_handler(sim):
             super().do_GET()
 
         def do_POST(self):
-            if sim is None or self.path not in ("/sim/send", "/sim/control"):
+            if sim is None or self.path not in ("/sim/send", "/sim/control", "/sim/coverage"):
                 self._json(404, {"ok": False})
                 return
-            text = self._body()
+            try:
+                text = self._body()
+            except ValueError as error:
+                self._json(400, {"ok": False, "reason": str(error)})
+                return
             if self.path == "/sim/send":
                 for line in text.splitlines():
                     if line.strip():
@@ -484,6 +601,9 @@ def make_handler(sim):
                 self._json(200, {"ok": True})
                 return
             try:
+                if self.path == "/sim/coverage":
+                    self._json(200, sim.coverage(json.loads(text)))
+                    return
                 sim.control(json.loads(text))
             except (ValueError, KeyError, TypeError) as e:
                 self._json(400, {"ok": False, "reason": str(e)})
@@ -547,7 +667,7 @@ def main():
         pass
     finally:
         if sim:
-            sim.proc.terminate()
+            sim.close()
 
 
 if __name__ == "__main__":
