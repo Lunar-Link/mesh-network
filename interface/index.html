@@ -184,7 +184,7 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
   </section>
 
   <section class="c7">
-    <h2>Network <span class="count" id="net-count"></span></h2>
+    <h2>Network <span class="count" id="net-count"></span><span class="tools"><button id="btn-map-layout" type="button" title="Recalculate node positions">Rearrange</button></span></h2>
     <svg id="map" role="img" aria-label="Network map"></svg>
     <div class="note muted" style="font-size:12px"><span id="map-hint"></span>Line color is <span class="term" data-term="ETX">ETX</span>: green ≤ 1.5, amber ≤ 3, red above. Dashed: stale report.</div>
   </section>
@@ -1000,6 +1000,7 @@ function renderKnown() {
 /* Map: the node's own links plus the neighbor lists in every status it has heard.
    Resting the pointer on a node dims everything not directly linked to it. */
 let mapAdj = new Map(), mapHover = null;
+let mapPositions = new Map(), mapLayoutPending = true;
 function renderMap() {
   const svg = $("map");
   const self = st.ident && Number.isInteger(st.ident.id) ? st.ident.id : null;
@@ -1013,16 +1014,16 @@ function renderMap() {
   }
   const attached = sim ? st.sim.attached : self;
   const edges = new Map();
-  const addEdge = (a, b, etx, stale) => {
+  const addEdge = (a, b, etx, stale, rssi = null) => {
     if (a === b) return;
     const key = a < b ? `${a}-${b}` : `${b}-${a}`;
     const old = edges.get(key);
     const worse = !old || etx === "inf" || (old.etx !== "inf" && etx > old.etx);
-    if (!old) edges.set(key, { a, b, etx, stale });
-    else edges.set(key, { a, b, etx: worse ? etx : old.etx, stale: old.stale && stale });
+    if (!old) edges.set(key, { a, b, etx, stale, rssi });
+    else edges.set(key, { a, b, etx: worse ? etx : old.etx, stale: old.stale && stale, rssi: rssi ?? old.rssi });
     ids.add(a); ids.add(b);
   };
-  if (self !== null) for (const l of st.links) if (l.up) addEdge(self, l.id, l.etx, false);
+  if (self !== null) for (const l of st.links) if (l.up) addEdge(self, l.id, l.etx, false, l.rssi);
   for (const n of st.nodes) for (const [id, e] of n.neighbors) addEdge(n.node, id, e, n.stale);
 
   const list = [...ids].sort((a, b) => a - b);
@@ -1030,15 +1031,57 @@ function renderMap() {
   for (const e of edges.values()) { mapAdj.get(e.a).add(e.b); mapAdj.get(e.b).add(e.a); }
   $("net-count").textContent = list.length ? `${list.length} node${list.length === 1 ? "" : "s"}` : "";
   const w = svg.clientWidth || 600, h = svg.clientHeight || 300, cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 34;
-  const pos = new Map(list.map((id, i) => {
-    const a = -Math.PI / 2 + 2 * Math.PI * i / list.length;
-    return [id, list.length === 1 ? [cx, cy] : [cx + r * Math.cos(a), cy + r * Math.sin(a)]];
-  }));
+  if (mapLayoutPending && list.length) {
+    const layout = new Map(list.map((id, i) => {
+      const a = -Math.PI / 2 + 2 * Math.PI * i / list.length;
+      return [id, list.length === 1 ? [cx, cy] : [cx + r * Math.cos(a), cy + r * Math.sin(a)]];
+    }));
+    // Relax the initial circle into a force layout; stronger RSSI links settle closer together.
+    for (let step = 0; step < 100 && list.length > 1; step++) {
+      const forces = new Map(list.map(id => [id, [0, 0]]));
+      for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+        const a = layout.get(list[i]), b = layout.get(list[j]);
+        const dx = b[0] - a[0], dy = b[1] - a[1], d = Math.max(1, Math.hypot(dx, dy));
+        const push = Math.max(0, 62 - d) * 0.04;
+        forces.get(list[i])[0] -= dx / d * push; forces.get(list[i])[1] -= dy / d * push;
+        forces.get(list[j])[0] += dx / d * push; forces.get(list[j])[1] += dy / d * push;
+      }
+      for (const e of edges.values()) {
+        const a = layout.get(e.a), b = layout.get(e.b);
+        const dx = b[0] - a[0], dy = b[1] - a[1], d = Math.max(1, Math.hypot(dx, dy));
+        const target = e.rssi !== null && Number.isFinite(Number(e.rssi))
+          ? Math.max(65, Math.min(150, 65 + (-50 - Number(e.rssi)) * 1.4))
+          : e.etx === "inf" ? 145 : 85 + Math.min(60, Math.max(0, (Number(e.etx) - 1) * 20));
+        const pull = (d - target) * 0.015;
+        forces.get(e.a)[0] += dx / d * pull; forces.get(e.a)[1] += dy / d * pull;
+        forces.get(e.b)[0] -= dx / d * pull; forces.get(e.b)[1] -= dy / d * pull;
+      }
+      for (const id of list) {
+        const p = layout.get(id), f = forces.get(id);
+        p[0] = Math.max(22, Math.min(w - 22, p[0] + f[0] + (cx - p[0]) * 0.001));
+        p[1] = Math.max(22, Math.min(h - 22, p[1] + f[1] + (cy - p[1]) * 0.001));
+      }
+    }
+    mapPositions = new Map([...layout].map(([id, [x, y]]) => [id, [x / w, y / h]]));
+    mapLayoutPending = false;
+  }
+  // New nodes get the clearest available spot while existing nodes stay put.
+  for (const id of list) if (!mapPositions.has(id)) {
+    let best = [0.5, 0.5], bestDistance = -1;
+    for (const radius of [0.32, 0.39, 0.45]) for (let i = 0; i < 48; i++) {
+      const angle = 2 * Math.PI * i / 48 + (id % 11) * 0.07;
+      const candidate = [0.5 + Math.cos(angle) * radius * Math.min(w, h) / w, 0.5 + Math.sin(angle) * radius * Math.min(w, h) / h];
+      const nearest = Math.min(...[...mapPositions.values()].map(([x, y]) => Math.hypot((candidate[0] - x) * w, (candidate[1] - y) * h)), Infinity);
+      if (nearest > bestDistance) { best = candidate; bestDistance = nearest; }
+    }
+    mapPositions.set(id, best);
+  }
+  const pos = new Map(list.map(id => { const [x, y] = mapPositions.get(id); return [id, [x * w, y * h]]; }));
   const color = c => `var(--${c})`;
   let out = "";
   for (const e of edges.values()) {
     const [x1, y1] = pos.get(e.a), [x2, y2] = pos.get(e.b);
-    out += `<line class="edge" data-a="${e.a}" data-b="${e.b}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${e.stale ? color("stale") : color(etxClass(e.etx))}" stroke-width="2" ${e.stale ? 'stroke-dasharray="4 4"' : ""}/>`;
+    out += `<line class="edge" data-a="${e.a}" data-b="${e.b}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${e.stale ? color("stale") : color(etxClass(e.etx))}" stroke-width="2" ${e.stale ? 'stroke-dasharray="4 4"' : ""}><title>${e.rssi !== null ? `RSSI ${e.rssi} dBm` : `RSSI unavailable; ETX ${etxText(e.etx)}`}</title></line>`;
   }
   for (const id of list) {
     const [x, y] = pos.get(id);
@@ -1073,6 +1116,7 @@ function setMapHover(id) {
   for (const el of svg.querySelectorAll(".edge")) el.classList.toggle("near", !!near && (Number(el.dataset.a) === mapHover || Number(el.dataset.b) === mapHover));
 }
 window.addEventListener("resize", renderMap);
+$("btn-map-layout").addEventListener("click", () => { mapLayoutPending = true; renderMap(); });
 $("map").addEventListener("pointerover", ev => { const node = ev.target.closest("[data-n]"); setMapHover(node ? Number(node.dataset.n) : null); });
 $("map").addEventListener("pointerleave", () => setMapHover(null));
 $("map").addEventListener("click", ev => {
