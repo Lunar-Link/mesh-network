@@ -12,6 +12,7 @@ import time
 from collections import deque
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+import webbrowser
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_EXE = HERE.parent / "build" / ("lmesh_console.exe" if sys.platform == "win32" else "lmesh_console")
@@ -513,6 +514,7 @@ def main():
     p.add_argument("--seed", type=int, default=1)
     p.add_argument("--loss", type=int, default=0, help="loss percent on every link")
     p.add_argument("--speed", type=float, default=1.0, help="simulated seconds per real second")
+    p.add_argument("--open", action="store_true", help="open the interface")
     a = p.parse_args()
 
     sim = None
@@ -525,6 +527,9 @@ def main():
     server.daemon_threads = True
     mode = f"simulator: {a.topo} of {a.nodes}, seed {a.seed}, {a.loss} % loss, x{a.speed:g}" if sim else "USB only"
     print(f"interface at http://localhost:{a.port}/  ({mode}); Ctrl+C to stop")
+    if a.open:
+        url = f"http://localhost:{a.port}/" + ("?sim" if sim else "")
+        webbrowser.open(url)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
