@@ -51,7 +51,7 @@ The main view keeps connection status, a short summary of this node, the network
 
 ### Arrange Overview
 
-On the **Network** map, rest the pointer on a node to highlight its direct neighbors and links; everything else dims.
+On the **Network** map, rest the pointer on a node to highlight its direct neighbors and links; everything else dims. The spring layout estimates distances for links with RSSI using the log-distance path-loss model. Adjust **RSSI @ 1 m** and **Exponent** for the radio and environment; the defaults are starting assumptions, not a calibration. Hover a link to see its estimated distance. Links reported by other nodes have ETX but no RSSI in the current status format, so those use ETX-based spacing. Pairs with no reported link repel each other to indicate they are likely farther apart. The resulting graph is inferred and is not a geographic map.
 
 Drag a Messages, Routing, Simulator, or Console tab into either Overview column. Drop below **This node** to stack a panel there, or onto the upper/lower half of another panel to place it before/after that panel. Drag a panel's title bar (marked **⠿**) to rearrange it; drop zones appear while dragging.
 
@@ -65,4 +65,4 @@ Docked tabs remain in the navigation; clicking one opens Overview and focuses it
 
 - The node table does not include the node itself, so this node's own battery and health flags are not shown; it needs the library to report its own status, or a firmware `battery` line.
 - φ needs firmware from this repository with φ accrual (5 November 2026 or later); with older firmware the φ and HELLO columns show "—" and the ping button gets `unknown_command`.
-- The map uses a circle layout, which gets busy past about 10 nodes.
+- RSSI-based distances depend on calibration and radio conditions; the force-directed map is an approximate relative layout, not a geographic fix. The current status format does not relay RSSI for remote links.

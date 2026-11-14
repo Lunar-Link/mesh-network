@@ -88,10 +88,14 @@ section h2 .tools button { padding: 1px 8px; font-size: 12px; }
 #map { width: 100%; height: 300px; display: block; }
 #map text { fill: var(--text); font-size: 12px; text-anchor: middle; dominant-baseline: central; }
 #map .lbl { fill: var(--muted); font-size: 10px; }
+#map-tools label { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; color: var(--muted); }
+#map-tools input { width: 48px; padding: 1px 3px; font-size: 11px; }
 #map .hit { cursor: pointer; }
 #map .hit:hover circle { stroke-width: 4; fill: var(--node-hover); }
-#map .edge { opacity: .85; transition: opacity .15s, stroke-width .15s; }
+#map .edge { opacity: .85; transition: opacity .15s, stroke-width .15s, x1 .45s ease, y1 .45s ease, x2 .45s ease, y2 .45s ease; }
 #map .node { transition: opacity .15s; }
+#map .node .body { transition: cx .45s ease, cy .45s ease; }
+#map .node text { transition: x .45s ease, y .45s ease; }
 #map.focus .edge { opacity: .18; }
 #map.focus .edge.near { opacity: 1; stroke-width: 3; }
 #map.focus .node { opacity: .4; }
@@ -184,9 +188,13 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
   </section>
 
   <section class="c7">
-    <h2>Network <span class="count" id="net-count"></span><span class="tools"><button id="btn-map-layout" type="button" title="Recalculate node positions">Rearrange</button></span></h2>
+    <h2>Network <span class="count" id="net-count"></span><span class="tools" id="map-tools">
+      <label title="Expected received signal strength at one meter">RSSI @ 1 m <input id="map-rssi-ref" type="number" min="-120" max="0" step="1" value="-40" aria-label="RSSI at one meter in dBm"> dBm</label>
+      <label title="Path-loss exponent for the log-distance model">Exponent <input id="map-path-loss-exp" type="number" min="1" max="6" step="0.1" value="2" aria-label="Path-loss exponent"></label>
+      <button id="btn-map-layout" type="button" title="Recalculate node positions">Rearrange</button>
+    </span></h2>
     <svg id="map" role="img" aria-label="Network map"></svg>
-    <div class="note muted" style="font-size:12px"><span id="map-hint"></span>Line color is <span class="term" data-term="ETX">ETX</span>: green ≤ 1.5, amber ≤ 3, red above. Dashed: stale report.</div>
+    <div class="note muted" style="font-size:12px"><span id="map-hint"></span>Spacing estimates distance from RSSI with the log-distance model; only links measured by this node have RSSI, all others use ETX spacing. Pairs with no reported link are pushed apart. Positions are inferred, not geographic. Line color is <span class="term" data-term="ETX">ETX</span>: green ≤ 1.5, amber ≤ 3, red above. Dashed: stale report.</div>
   </section>
   </div>
 
@@ -1000,7 +1008,41 @@ function renderKnown() {
 /* Map: the node's own links plus the neighbor lists in every status it has heard.
    Resting the pointer on a node dims everything not directly linked to it. */
 let mapAdj = new Map(), mapHover = null;
-let mapPositions = new Map(), mapLayoutPending = true;
+const MAP_MODEL_KEY = "lunar-mesh-map-model-v1";
+const MAP_RSSI_MIN = -120, MAP_RSSI_MAX = 0, MAP_EXP_MIN = 1, MAP_EXP_MAX = 6;
+const mapPositions = new Map(), mapVelocities = new Map();
+let mapLayoutPending = true;
+try {
+  const saved = JSON.parse(localStorage.getItem(MAP_MODEL_KEY));
+  if (Number.isFinite(saved?.rssiAtOneMeter) && saved.rssiAtOneMeter >= MAP_RSSI_MIN && saved.rssiAtOneMeter <= MAP_RSSI_MAX) {
+    $("map-rssi-ref").value = saved.rssiAtOneMeter;
+  }
+  if (Number.isFinite(saved?.pathLossExponent) && saved.pathLossExponent >= MAP_EXP_MIN && saved.pathLossExponent <= MAP_EXP_MAX) {
+    $("map-path-loss-exp").value = saved.pathLossExponent;
+  }
+} catch {}
+function mapModel() {
+  const rssiAtOneMeter = Number($("map-rssi-ref").value);
+  const pathLossExponent = Number($("map-path-loss-exp").value);
+  return {
+    rssiAtOneMeter: Number.isFinite(rssiAtOneMeter) && rssiAtOneMeter >= MAP_RSSI_MIN && rssiAtOneMeter <= MAP_RSSI_MAX ? rssiAtOneMeter : -40,
+    pathLossExponent: Number.isFinite(pathLossExponent) && pathLossExponent >= MAP_EXP_MIN && pathLossExponent <= MAP_EXP_MAX ? pathLossExponent : 2,
+  };
+}
+function estimatedDistanceMeters(rssi, model) {
+  const signal = Number(rssi);
+  if (rssi === null || rssi === undefined || !Number.isFinite(signal) || signal < -200 || signal > 0) return null;
+  const distance = 10 ** ((model.rssiAtOneMeter - signal) / (10 * model.pathLossExponent));
+  return Number.isFinite(distance) ? Math.min(1000, Math.max(0.1, distance)) : 1000;
+}
+for (const input of [$("map-rssi-ref"), $("map-path-loss-exp")]) {
+  input.addEventListener("change", () => {
+    if (!input.reportValidity()) return;
+    const model = mapModel();
+    try { localStorage.setItem(MAP_MODEL_KEY, JSON.stringify(model)); } catch {}
+    renderMap();
+  });
+}
 function renderMap() {
   const svg = $("map");
   const self = st.ident && Number.isInteger(st.ident.id) ? st.ident.id : null;
@@ -1032,56 +1074,86 @@ function renderMap() {
   $("net-count").textContent = list.length ? `${list.length} node${list.length === 1 ? "" : "s"}` : "";
   const w = svg.clientWidth || 600, h = svg.clientHeight || 300, cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 34;
   if (mapLayoutPending && list.length) {
-    const layout = new Map(list.map((id, i) => {
+    mapPositions.clear();
+    mapVelocities.clear();
+    list.forEach((id, i) => {
       const a = -Math.PI / 2 + 2 * Math.PI * i / list.length;
-      return [id, list.length === 1 ? [cx, cy] : [cx + r * Math.cos(a), cy + r * Math.sin(a)]];
-    }));
-    // Relax the initial circle into a force layout; stronger RSSI links settle closer together.
-    for (let step = 0; step < 100 && list.length > 1; step++) {
-      const forces = new Map(list.map(id => [id, [0, 0]]));
-      for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
-        const a = layout.get(list[i]), b = layout.get(list[j]);
-        const dx = b[0] - a[0], dy = b[1] - a[1], d = Math.max(1, Math.hypot(dx, dy));
-        const push = Math.max(0, 62 - d) * 0.04;
-        forces.get(list[i])[0] -= dx / d * push; forces.get(list[i])[1] -= dy / d * push;
-        forces.get(list[j])[0] += dx / d * push; forces.get(list[j])[1] += dy / d * push;
-      }
-      for (const e of edges.values()) {
-        const a = layout.get(e.a), b = layout.get(e.b);
-        const dx = b[0] - a[0], dy = b[1] - a[1], d = Math.max(1, Math.hypot(dx, dy));
-        const target = e.rssi !== null && Number.isFinite(Number(e.rssi))
-          ? Math.max(65, Math.min(150, 65 + (-50 - Number(e.rssi)) * 1.4))
-          : e.etx === "inf" ? 145 : 85 + Math.min(60, Math.max(0, (Number(e.etx) - 1) * 20));
-        const pull = (d - target) * 0.015;
-        forces.get(e.a)[0] += dx / d * pull; forces.get(e.a)[1] += dy / d * pull;
-        forces.get(e.b)[0] -= dx / d * pull; forces.get(e.b)[1] -= dy / d * pull;
-      }
-      for (const id of list) {
-        const p = layout.get(id), f = forces.get(id);
-        p[0] = Math.max(22, Math.min(w - 22, p[0] + f[0] + (cx - p[0]) * 0.001));
-        p[1] = Math.max(22, Math.min(h - 22, p[1] + f[1] + (cy - p[1]) * 0.001));
-      }
-    }
-    mapPositions = new Map([...layout].map(([id, [x, y]]) => [id, [x / w, y / h]]));
+      const x = list.length === 1 ? cx : cx + r * Math.cos(a);
+      const y = list.length === 1 ? cy : cy + r * Math.sin(a);
+      mapPositions.set(id, [x / w, y / h]);
+      mapVelocities.set(id, [0, 0]);
+    });
     mapLayoutPending = false;
   }
-  // New nodes get the clearest available spot while existing nodes stay put.
+  // Place new nodes around the current graph so later reports can pull them into place.
   for (const id of list) if (!mapPositions.has(id)) {
     let best = [0.5, 0.5], bestDistance = -1;
-    for (const radius of [0.32, 0.39, 0.45]) for (let i = 0; i < 48; i++) {
-      const angle = 2 * Math.PI * i / 48 + (id % 11) * 0.07;
+    const existing = [...mapPositions.values()];
+    for (let i = 0; i < 72; i++) {
+      const angle = 2 * Math.PI * i / 72 + (id % 11) * 0.07;
+      const radius = 0.28 + (i % 3) * 0.06;
       const candidate = [0.5 + Math.cos(angle) * radius * Math.min(w, h) / w, 0.5 + Math.sin(angle) * radius * Math.min(w, h) / h];
-      const nearest = Math.min(...[...mapPositions.values()].map(([x, y]) => Math.hypot((candidate[0] - x) * w, (candidate[1] - y) * h)), Infinity);
+      const nearest = Math.min(...existing.map(([x, y]) => Math.hypot((candidate[0] - x) * w, (candidate[1] - y) * h)), Infinity);
       if (nearest > bestDistance) { best = candidate; bestDistance = nearest; }
     }
     mapPositions.set(id, best);
+    mapVelocities.set(id, [0, 0]);
   }
-  const pos = new Map(list.map(id => { const [x, y] = mapPositions.get(id); return [id, [x * w, y * h]]; }));
+  const model = mapModel();
+  const pos = new Map(list.map(id => {
+    const [x, y] = mapPositions.get(id);
+    return [id, [x * w, y * h]];
+  }));
+  const spacing = new Map([...edges.values()].map(e => {
+    const meters = estimatedDistanceMeters(e.rssi, model);
+    // Keep model-derived distances legible in the compact map while preserving their order.
+    const target = meters === null
+      ? e.etx === "inf" ? 145 : 85 + Math.min(60, Math.max(0, (Number(e.etx) - 1) * 20))
+      : Math.max(52, Math.min(190, 38 + 12 * meters));
+    return [e, { meters, target }];
+  }));
+  const linkedPairs = new Set(edges.keys());
+  const unlinkedSeparation = Math.min(190, Math.min(w, h) * 0.55);
+  // Damped spring-mass relaxation runs on every map refresh, so new RSSI samples move the graph.
+  for (let step = 0; step < 70 && list.length > 1; step++) {
+    const forces = new Map(list.map(id => [id, [0, 0]]));
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+      const a = pos.get(list[i]), b = pos.get(list[j]);
+      const dx = b[0] - a[0], dy = b[1] - a[1], d = Math.max(1, Math.hypot(dx, dy));
+      const key = `${list[i]}-${list[j]}`;
+      const minimum = linkedPairs.has(key) ? 68 : unlinkedSeparation;
+      const push = Math.max(0, minimum - d) * (linkedPairs.has(key) ? 0.035 : 0.055);
+      forces.get(list[i])[0] -= dx / d * push; forces.get(list[i])[1] -= dy / d * push;
+      forces.get(list[j])[0] += dx / d * push; forces.get(list[j])[1] += dy / d * push;
+    }
+    for (const [e, link] of spacing) {
+      const a = pos.get(e.a), b = pos.get(e.b);
+      const dx = b[0] - a[0], dy = b[1] - a[1], d = Math.max(1, Math.hypot(dx, dy));
+      const pull = Math.max(-6, Math.min(6, (d - link.target) * 0.025));
+      forces.get(e.a)[0] += dx / d * pull; forces.get(e.a)[1] += dy / d * pull;
+      forces.get(e.b)[0] -= dx / d * pull; forces.get(e.b)[1] -= dy / d * pull;
+    }
+    for (const id of list) {
+      const p = pos.get(id), f = forces.get(id), v = mapVelocities.get(id);
+      v[0] = Math.max(-7, Math.min(7, (v[0] + f[0] + (cx - p[0]) * 0.0008) * 0.78));
+      v[1] = Math.max(-7, Math.min(7, (v[1] + f[1] + (cy - p[1]) * 0.0008) * 0.78));
+      p[0] = Math.max(22, Math.min(w - 22, p[0] + v[0]));
+      p[1] = Math.max(22, Math.min(h - 22, p[1] + v[1]));
+      if (p[0] === 22 || p[0] === w - 22) v[0] *= -0.25;
+      if (p[1] === 22 || p[1] === h - 22) v[1] *= -0.25;
+    }
+  }
+  for (const id of list) {
+    const [x, y] = pos.get(id);
+    mapPositions.set(id, [x / w, y / h]);
+  }
   const color = c => `var(--${c})`;
   let out = "";
   for (const e of edges.values()) {
     const [x1, y1] = pos.get(e.a), [x2, y2] = pos.get(e.b);
-    out += `<line class="edge" data-a="${e.a}" data-b="${e.b}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${e.stale ? color("stale") : color(etxClass(e.etx))}" stroke-width="2" ${e.stale ? 'stroke-dasharray="4 4"' : ""}><title>${e.rssi !== null ? `RSSI ${e.rssi} dBm` : `RSSI unavailable; ETX ${etxText(e.etx)}`}</title></line>`;
+    const link = spacing.get(e);
+    const estimate = link.meters === null ? `RSSI unavailable; ETX ${etxText(e.etx)}` : `RSSI ${e.rssi} dBm; estimated distance ${link.meters.toFixed(1)} m`;
+    out += `<line class="edge" data-a="${e.a}" data-b="${e.b}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${e.stale ? color("stale") : color(etxClass(e.etx))}" stroke-width="2" ${e.stale ? 'stroke-dasharray="4 4"' : ""}><title>${estimate}</title></line>`;
   }
   for (const id of list) {
     const [x, y] = pos.get(id);
