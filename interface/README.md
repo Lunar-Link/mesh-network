@@ -8,7 +8,9 @@ A browser page for a laptop plugged into a mesh node. It shows the node's status
 
 | File | Contents |
 |---|---|
-| `index.html` | The page: one file, no libraries. Web Serial for USB, a simulator mode, polling of the node's tables, the send form, the console. |
+| `index.html` | The page's markup. No libraries and no build step. |
+| `styles.css` | All styles, with light and dark themes. |
+| `js/` | The page's code as plain scripts loaded in order (they share one global scope): `state.js` shared state, `format.js` formatting and φ math, `glossary.js` term meanings and tooltips, `console.js` the Console tab, `protocol.js` the command queue and node events, `poll.js` refreshing the node's tables, `transport.js` USB and simulator connections, and `main.js` startup. `views/` draws each part of the page: `header.js`, `tabs.js` (also theme and Advanced), `self.js`, `tables.js`, `messages.js`, `map.js`, `side.js`, `sim.js`. |
 | `serve.py` | Serves the page on localhost (Web Serial needs a secure origin) and, with `--sim`, runs `lmesh_console` and bridges it to the page. Python standard library only. |
 
 ## Use with a board
@@ -33,7 +35,7 @@ Open http://localhost:8000/?sim. The page connects to node 1 of a simulated netw
 
 The simulator panel also changes the run while it goes; the command-line options only set where it starts:
 
-- **Clock:** pause and run, speed from ×0.1 to ×100, and **Step** to advance a set amount of simulated time (0.5 s to 15 min) per click, or press → . Stepping pauses the clock first.
+- **Clock** (in the page header, so it stays in reach on every tab): pause and run, speed from ×0.1 to ×100, and **Step** to advance a set amount of simulated time (0.5 s to 15 min) per click, or press → . Stepping pauses the clock first.
 - **Link loss:** one loss percentage applied to every link that is up, and to links joined from the panel.
 - **Random outages:** the share of time nodes and links spend down, and the mean outage length. Outages start at random and end on their own; the plugged-in node can be spared. **Heal all** ends them now.
 - **Scheduled downtime:** take a node down after a delay, for a time, once or repeating (for example 300 s down every 900 s, like a node that sleeps to save power).
@@ -43,7 +45,7 @@ All of these run in `serve.py` in simulated time, using the console's `@t`, `@ki
 
 ## Interface
 
-The main view keeps connection status, a short summary of this node, the network map, and message send/receive in view. Message type, priority, and lifetime are under **Message options**. Detailed node, neighbor, and route tables, sent history, and the console are under **Diagnostics and raw console**. The console can show plain-language explanations or raw protocol output. Resting the pointer on a dotted-underlined term shows what it means.
+The header shows the connection, this node's identity, and a health summary: how many of the nodes this node has heard of it can reach, and how many of your sent messages are still waiting for a delivery receipt. It is green when every known node is reachable, amber when some are not, and red when none are or the node has no neighbors. In simulator mode the header also holds the simulator clock. **Overview** is the map and side panel; **Messages** has the send form (type, priority, and lifetime under **Message options**), sent history, and received messages; **Routing** has the node, neighbor, and route tables; **Console** shows the protocol traffic in plain language, or raw with Advanced on. Resting the pointer on a dotted-underlined term shows what it means.
 
 **Advanced** (top right, off by default, remembered in this browser) shows what only matters when debugging. Without it, Routing shows each node's station, battery, health and when it was last heard; each neighbor's state and link quality in words (good, fair, poor); and each route's next hop. The console stays in plain language with polling hidden. Advanced adds uptime, store, loss and neighbor lists for nodes; ETX, φ, HELLO timing, delivery ratios, RSSI and SNR for neighbors; metric and sequence number for routes; raw console output and polling; **More node statistics**; the radio settings in the header; the Command and Telemetry message types; the layout toolbar; and the simulator's link cut/join, random outages, scheduled downtime and restart controls. Turning it off resets the message type to Text and the console to plain language without polling, so no hidden setting stays in effect.
 
@@ -51,13 +53,11 @@ The main view keeps connection status, a short summary of this node, the network
 
 ## Techniques
 
-### Arrange Overview
+### Overview
 
 On the **Network** map, rest the pointer on a node to highlight its direct neighbors and links; everything else dims. Click a node to show it in the side panel: its status, battery, our link and route to it, when it was last heard, its health and its neighbors (Advanced adds uptime, store, losses, ETX, route metric and signal), with **Send message**, which opens Messages addressed to it. In simulator mode the panel also has **Plug in** and **Kill** or **Revive**, and This node has a Kill/Revive button for the node you are plugged into. Click the node again, click empty map, press Escape, or use **← This node** to return. The Simulator tab keeps the same buttons for every node.
 
-Overview opens with the **Network** map in the wide left column, sized to fill the window, and **This node** as a side panel on the right; on a narrow window the side panel moves below the map. Drag a Messages, Routing, Simulator, or Console tab into either Overview column. Drop below **This node** to stack a panel there, or onto the upper/lower half of another panel to place it before/after that panel. Drag a panel's title bar (marked **⠿**) to rearrange it; drop zones appear while dragging.
-
-Docked tabs remain in the navigation; clicking one opens Overview and focuses its panel. Panels share their original live controls, so docking preserves message drafts, simulator state, and the connection. Each panel's title bar has window-style controls: **–** minimizes (hides contents) and **+** expands, **□** maximizes to fill the window (or double-click the title bar), and **❐** or Escape restores it. **×** returns a docked panel to its tab while keeping Overview open; select its tab when you want to view it again. Layout and minimized state are saved in this browser; **Reset layout** restores the map and side panel. Simulator panels appear only when a simulator connection is available.
+Overview has a fixed layout: the **Network** map in the wide left column, sized to fill the window, and the side panel (**This node**, or the node picked on the map) on the right. On a narrow window the side panel moves below the map. The other sections are tabs.
 
 - **One command in flight.** Commands go through a queue; dump rows are collected until the `end` line, and event lines (`ev`) are handled whenever they arrive, so events and replies never mix up.
 - **Node clock estimate.** "Heard" times are node-clock values, so the page keeps the newest event time plus elapsed wall time to show ages.
