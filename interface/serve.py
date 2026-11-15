@@ -544,7 +544,7 @@ def flourish(port, sim_mode):
         out.write(s + end)
         out.flush()
 
-    def typed(s, delay=0.012):
+    def typed(s, delay=0.006):
         if not tty:
             return show(s)
         for ch in s:

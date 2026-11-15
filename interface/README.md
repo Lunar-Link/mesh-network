@@ -45,13 +45,15 @@ All of these run in `serve.py` in simulated time, using the console's `@t`, `@ki
 
 The main view keeps connection status, a short summary of this node, the network map, and message send/receive in view. Message type, priority, and lifetime are under **Message options**. Detailed node, neighbor, and route tables, sent history, and the console are under **Diagnostics and raw console**. The console can show plain-language explanations or raw protocol output. Resting the pointer on a dotted-underlined term shows what it means.
 
+**Advanced** (top right, off by default, remembered in this browser) shows what only matters when debugging: the Routing and Console tabs, **Ping neighbors** and **More node statistics**, the radio settings in the header, the Command and Telemetry message types, the layout toolbar, and the simulator's link cut/join, random outages, scheduled downtime, and restart controls. Turning it off returns to Overview if a hidden tab was open, and resets the message type to Text so nothing hidden changes what gets sent.
+
 **Ping neighbors** (in **This node**) broadcasts a HELLO beacon at once; neighbors that hear it answer, and are marked **answered** in the neighbor table. Each neighbor also shows φ, the node's suspicion that it has gone silent ([SPEC.md](../SPEC.md) Section 7.3), recomputed every second so it climbs live; the node drops the neighbor at 8.
 
 ## Techniques
 
 ### Arrange Overview
 
-On the **Network** map, rest the pointer on a node to highlight its direct neighbors and links; everything else dims.
+On the **Network** map, rest the pointer on a node to highlight its direct neighbors and links; everything else dims. In simulator mode, click a node for a popover beside it with **Plug in** and **Kill** or **Revive**; click it again, click empty map, or press Escape to close it. The Simulator tab keeps the same buttons for every node.
 
 Drag a Messages, Routing, Simulator, or Console tab into either Overview column. Drop below **This node** to stack a panel there, or onto the upper/lower half of another panel to place it before/after that panel. Drag a panel's title bar (marked **⠿**) to rearrange it; drop zones appear while dragging.
 

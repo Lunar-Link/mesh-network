@@ -12,6 +12,7 @@
 try {
   const t = localStorage.getItem("lunar-mesh-theme");
   if (t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches)) document.documentElement.dataset.theme = "dark";
+  if (localStorage.getItem("lunar-mesh-advanced") === "1") document.documentElement.dataset.advanced = "";
 } catch {}
 </script>
 <style>
@@ -45,6 +46,12 @@ button:disabled { opacity: .5; cursor: default; }
 #conn { color: var(--muted); }
 #conn.on { color: var(--good); font-weight: 600; }
 [hidden] { display: none !important; }
+/* Advanced mode: .adv marks what only matters when debugging; docked Routing and Console panels go with their tabs. */
+:root:not([data-advanced]) .adv,
+:root:not([data-advanced]) .dashboard-toolbar,
+:root:not([data-advanced]) .dashboard-card:has(> #panel-network, > #panel-console) { display: none !important; }
+.adv-toggle { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 13px; cursor: pointer; user-select: none; }
+.adv-toggle input { margin: 0; cursor: pointer; }
 .tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
 .tabs button { padding: 8px 14px; border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: transparent; color: var(--muted); }
 .tabs button:hover:not(:disabled) { background: transparent; color: var(--text); }
@@ -97,6 +104,12 @@ section h2 .tools button { padding: 1px 8px; font-size: 12px; }
 #map.focus .node { opacity: .4; }
 #map.focus .node.near { opacity: 1; }
 #map.focus .node.near .body { stroke-width: 3.5; }
+#map .node.sel .body { stroke-width: 4; }
+.map-wrap { position: relative; }
+#map-pop { position: absolute; z-index: 5; display: flex; align-items: center; gap: 6px; padding: 5px 6px 5px 10px; background: var(--panel); border: 1px solid var(--control-border); border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,.2); font-size: 12px; white-space: nowrap; }
+#map-pop button { padding: 1px 8px; font-size: 12px; }
+#map-pop .kill { color: var(--poor); border-color: var(--poor); }
+#map-pop .x { border: 0; background: transparent; color: var(--muted); padding: 0 4px; }
 form.send { display: grid; grid-template-columns: 90px 1fr auto; gap: 8px; margin-bottom: 10px; }
 form.send label { display: flex; flex-direction: column; font-size: 12px; color: var(--muted); gap: 2px; }
 form.send input, form.send select { width: 100%; }
@@ -155,14 +168,15 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
   <button id="btn-usb">Connect USB</button>
   <button id="btn-sim" hidden>Simulator</button>
   <button id="btn-close" hidden>Disconnect</button>
+  <label class="adv-toggle" data-tip="Show diagnostics: routing tables, console, frame statistics, radio settings, and the extra simulator controls."><input type="checkbox" id="adv"> Advanced</label>
   <button id="btn-theme" type="button" aria-pressed="false">Dark mode</button>
 </header>
 
 <nav class="tabs" role="tablist" aria-label="Sections">
   <button id="tab-overview" role="tab" aria-controls="panel-overview" aria-selected="true">Overview</button>
   <button id="tab-messages" role="tab" aria-controls="panel-messages" aria-selected="false" tabindex="-1">Messages <span class="count" id="tab-rx-count"></span></button>
-  <button id="tab-network" role="tab" aria-controls="panel-network" aria-selected="false" tabindex="-1">Routing</button>
-  <button id="tab-console" role="tab" aria-controls="panel-console" aria-selected="false" tabindex="-1">Console</button>
+  <button id="tab-network" class="adv" role="tab" aria-controls="panel-network" aria-selected="false" tabindex="-1">Routing</button>
+  <button id="tab-console" class="adv" role="tab" aria-controls="panel-console" aria-selected="false" tabindex="-1">Console</button>
   <button id="tab-sim" role="tab" aria-controls="panel-sim" aria-selected="false" tabindex="-1" hidden>Simulator</button>
 </nav>
 
@@ -173,10 +187,10 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
   <div id="panel-overview" class="tab-panel" role="tabpanel" aria-labelledby="tab-overview">
   <section class="c5">
     <h2>This node <span id="self-state"></span>
-      <span class="tools"><span class="muted" id="ping-note"></span>
+      <span class="tools adv"><span class="muted" id="ping-note"></span>
         <button id="btn-ping" data-term="Ping" disabled>Ping neighbors</button></span></h2>
     <div class="kv" id="self"></div>
-    <details>
+    <details class="adv">
       <summary>More node statistics</summary>
       <div class="kv" id="self-more" style="margin-top:8px"></div>
       <div class="scroll" style="margin-top:12px"><table id="frames"></table></div>
@@ -185,7 +199,10 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
 
   <section class="c7">
     <h2>Network <span class="count" id="net-count"></span></h2>
-    <svg id="map" role="img" aria-label="Network map"></svg>
+    <div class="map-wrap">
+      <svg id="map" role="img" aria-label="Network map"></svg>
+      <div id="map-pop" role="dialog" aria-label="Node actions" hidden></div>
+    </div>
     <div class="note muted" style="font-size:12px"><span id="map-hint"></span>Line color is <span class="term" data-term="ETX">ETX</span>: green ≤ 1.5, amber ≤ 3, red above. Dashed: stale report.</div>
   </section>
   </div>
@@ -200,7 +217,7 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
       <details class="send-options">
         <summary>Message options</summary>
         <div class="option-grid">
-          <label><span class="term" data-term="Type">Type</span><select id="f-type"><option value="text">Text</option><option value="cmd">Command</option><option value="tel">Telemetry (hex)</option></select></label>
+          <label class="adv"><span class="term" data-term="Type">Type</span><select id="f-type"><option value="text">Text</option><option value="cmd">Command</option><option value="tel">Telemetry (hex)</option></select></label>
           <label><span class="term" data-term="Priority">Priority</span><select id="f-prio"><option value="u">Urgent</option><option value="n" selected>Normal</option><option value="r">Routine</option></select></label>
           <label><span class="term" data-term="Lifetime">Lifetime (seconds)</span><input id="f-life" type="number" min="1" value="600" required></label>
         </div>
@@ -236,7 +253,7 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
   <section id="simbar">
     <h2>Simulator <span class="note">plug into a node, or kill one</span></h2>
     <div class="nodes" id="sim-nodes"></div>
-    <div class="cut">Link
+    <div class="cut adv">Link
       <input id="cut-a" type="number" min="1" max="254" placeholder="a">
       <input id="cut-b" type="number" min="1" max="254" placeholder="b">
       <button id="btn-cut">Cut</button>
@@ -261,8 +278,8 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
         <input id="sim-loss" type="range" min="0" max="90" step="1"><span class="val" id="sim-loss-v"></span>
       </div>
 
-      <div class="k"><span class="term" data-term="Random outages">Random outages</span></div>
-      <div class="v">
+      <div class="k adv"><span class="term" data-term="Random outages">Random outages</span></div>
+      <div class="v adv">
         <label>Nodes down <input id="sim-cn" type="range" min="0" max="50" step="1"></label><span class="val" id="sim-cn-v"></span>
         <label>Links down <input id="sim-cl" type="range" min="0" max="50" step="1"></label><span class="val" id="sim-cl-v"></span>
         <label>Mean outage <input id="sim-cm" type="number" min="1" max="86400" step="1"> s</label>
@@ -270,8 +287,8 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
         <button id="sim-heal" data-tip="End every random outage now.">Heal all</button>
       </div>
 
-      <div class="k"><span class="term" data-term="Scheduled downtime">Scheduled downtime</span></div>
-      <div class="v">
+      <div class="k adv"><span class="term" data-term="Scheduled downtime">Scheduled downtime</span></div>
+      <div class="v adv">
         <label>Node <select id="sim-sn"></select></label>
         <label>Starts in <input id="sim-ss" type="number" min="0" value="10"> s</label>
         <label>Down for <input id="sim-sd" type="number" min="1" value="60"> s</label>
@@ -280,8 +297,8 @@ form.send .option-grid { display: grid; grid-template-columns: repeat(3, minmax(
         <div id="sim-sched-list"></div>
       </div>
 
-      <div class="k">Restart network</div>
-      <div class="v">
+      <div class="k adv">Restart network</div>
+      <div class="v adv">
         <label>Topology <select id="sim-rt"><option>random</option><option>line</option><option>ring</option><option>diamond</option></select></label>
         <label>Nodes <input id="sim-rn" type="number" min="2" max="16"></label>
         <label>Seed <input id="sim-rs" type="number" min="0"></label>
@@ -377,10 +394,24 @@ $("btn-theme").onclick = () => {
 };
 updateThemeButton();
 
+/* Advanced mode: off by default; shows what only matters when debugging. Remembered across visits. */
+$("adv").checked = "advanced" in document.documentElement.dataset;
+$("adv").onchange = () => {
+  const on = $("adv").checked;
+  document.documentElement.toggleAttribute("data-advanced", on);
+  try { localStorage.setItem("lunar-mesh-advanced", on ? "1" : "0"); } catch {}
+  if (!on) {
+    if ($("f-type").value !== "text") { $("f-type").value = "text"; $("f-type").onchange(); }  // no hidden non-text sends
+    if (!tabShown(currentTab())) selectTab($("tab-overview"));
+  }
+  renderMap();  // panel widths may have changed
+};
+
 /* Tabs: only visibility changes, so the connection, polling, and console history carry on in the background. */
 const tabs = [...document.querySelectorAll('[role="tab"]')];
 let rxTotal = 0, rxSeen = 0;  // received-message count, and how many were on screen when Messages was last open
 const currentTab = () => tabs.find(t => t.getAttribute("aria-selected") === "true");
+const tabShown = t => !t.hidden && getComputedStyle(t).display !== "none";  // hidden, or by CSS outside advanced mode
 function renderRxBadge() {
   if (currentTab() === $("tab-messages") || rxSeen > rxTotal) rxSeen = rxTotal;
   const unread = rxTotal - rxSeen;
@@ -404,7 +435,7 @@ function selectTab(tab) {
 for (const tab of tabs) {
   tab.onclick = () => selectTab(tab);
   tab.onkeydown = ev => {  // arrow keys move between tabs, per the WAI-ARIA tabs pattern
-    const shown = tabs.filter(t => !t.hidden);
+    const shown = tabs.filter(tabShown);
     const i = shown.indexOf(tab);
     const next = { ArrowRight: shown[(i + 1) % shown.length], ArrowLeft: shown[(i - 1 + shown.length) % shown.length],
       Home: shown[0], End: shown[shown.length - 1] }[ev.key];
@@ -832,7 +863,7 @@ function renderIdent() {
     const r = st.radio;
     if (r.state === "ready") {
       const mhz = r.band_hz ? (r.band_hz / 1e6).toFixed(3) + " MHz" : "";
-      parts.push(`<span>Radio <b>${esc(r.driver)}</b> ${mhz} SF${r.sf} ${BW_KHZ[r.bw] || "BW" + r.bw} ${r.power_dbm} dBm</span>`);
+      parts.push(`<span class="adv">Radio <b>${esc(r.driver)}</b> ${mhz} SF${r.sf} ${BW_KHZ[r.bw] || "BW" + r.bw} ${r.power_dbm} dBm</span>`);
     } else {
       parts.push(`<span>Radio <b class="poor">${esc(r.state)}</b></span>`);
     }
@@ -999,7 +1030,7 @@ function renderKnown() {
 
 /* Map: the node's own links plus the neighbor lists in every status it has heard.
    Resting the pointer on a node dims everything not directly linked to it. */
-let mapAdj = new Map(), mapHover = null;
+let mapAdj = new Map(), mapHover = null, mapSel = null, mapPos = new Map();
 function renderMap() {
   const svg = $("map");
   const self = st.ident && Number.isInteger(st.ident.id) ? st.ident.id : null;
@@ -1049,9 +1080,9 @@ function renderMap() {
     const stroke = dead ? "var(--poor)" : me ? "var(--accent)" : stale ? "var(--stale)" : n && n.flags & 21 ? "var(--poor)" : "var(--good)";
     const textStyle = [me ? "font-weight:700" : "", dead ? "fill:var(--poor);text-decoration:line-through" : stale && !me ? "fill:var(--stale)" : ""].join(";");
     const label = dead ? "killed" : n && n.station ? n.station : "";
-    const click = sim && !me;
-    out += `<g class="node${click ? " hit" : ""}" data-n="${id}"${click ? ` data-attach="${id}"` : ""}>`;
-    if (click) out += `<title>Plug into node ${id}${dead ? " (killed)" : ""}</title>`;
+    const click = sim;
+    out += `<g class="node${click ? " hit" : ""}${id === mapSel ? " sel" : ""}" data-n="${id}"${click ? ` data-pick="${id}"` : ""}>`;
+    if (click) out += `<title>Node ${id}${dead ? " (killed)" : me ? " (plugged in)" : ""}: click for actions</title>`;
     if (me && sim) out += `<circle cx="${x}" cy="${y}" r="22" fill="none" stroke="var(--accent)" stroke-width="1.5"/>`;
     out += `<circle class="body" cx="${x}" cy="${y}" r="17" fill="${fill}" stroke="${stroke}" stroke-width="2.5" ${dead ? 'stroke-dasharray="4 3"' : ""}/>`;
     out += `<text x="${x}" y="${y}" style="${textStyle}">${id}</text>`;
@@ -1062,8 +1093,46 @@ function renderMap() {
   svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
   svg.innerHTML = out;
   setMapHover(mapHover);
-  $("map-hint").textContent = sim ? "Click a node to plug in. " : "";
+  mapPos = pos;
+  renderMapPop(sim);
+  $("map-hint").textContent = sim ? "Click a node to plug in, kill, or revive it. " : "";
 }
+
+/* Simulator actions for the node clicked on the map, in a popover beside it. Redrawn with the map, so the
+   Kill button turns into Revive once the simulator reports the node down. */
+function renderMapPop(sim) {
+  const pop = $("map-pop");
+  if (!sim || mapSel === null || !mapPos.has(mapSel)) { mapSel = null; pop.hidden = true; return; }
+  const id = mapSel, dead = simDead(id), me = id === st.sim.attached;
+  const html = `<b>Node ${id}</b>
+    ${me ? '<span class="muted">plugged in</span>' : `<button data-attach="${id}">Plug in</button>`}
+    <button data-sim="${dead ? "@revive" : "@kill"} ${id}"${dead ? "" : ' class="kill"'}>${dead ? "Revive" : "Kill"}</button>
+    <button class="x" data-close aria-label="Close">×</button>`;
+  if (pop.dataset.html !== html) { pop.innerHTML = html; pop.dataset.html = html; }  // unchanged: keep focus on its button
+  pop.hidden = false;
+  const [x, y] = mapPos.get(id), w = $("map").clientWidth, pw = pop.offsetWidth, ph = pop.offsetHeight;
+  const left = x + 26 + pw <= w ? x + 26 : Math.max(0, x - 26 - pw);  // right of the node, or left if it would overflow
+  pop.style.left = `${left}px`;
+  pop.style.top = `${Math.max(0, y - ph / 2)}px`;
+}
+function pickNode(id) {
+  mapSel = id === mapSel ? null : id;
+  renderMap();
+  if (mapSel !== null) $("map-pop").querySelector("button").focus();
+}
+$("map-pop").addEventListener("click", async ev => {
+  const b = ev.target.closest("button");
+  if (!b) return;
+  if (b.hasAttribute("data-close")) { pickNode(mapSel); return; }
+  if (b.dataset.attach) { attachTo(Number(b.dataset.attach)); return; }
+  await command(b.dataset.sim, false).catch(() => {});
+  refresh();
+});
+document.addEventListener("keydown", ev => {  // capture: Escape closes the popover before it restores a maximized panel
+  if (ev.key !== "Escape" || mapSel === null) return;
+  ev.stopImmediatePropagation();
+  pickNode(mapSel);
+}, true);
 function setMapHover(id) {
   const svg = $("map");
   mapHover = id != null && mapAdj.has(id) ? id : null;
@@ -1076,8 +1145,9 @@ window.addEventListener("resize", renderMap);
 $("map").addEventListener("pointerover", ev => { const node = ev.target.closest("[data-n]"); setMapHover(node ? Number(node.dataset.n) : null); });
 $("map").addEventListener("pointerleave", () => setMapHover(null));
 $("map").addEventListener("click", ev => {
-  const g = ev.target.closest("[data-attach]");
-  if (g) attachTo(Number(g.dataset.attach));
+  const g = ev.target.closest("[data-pick]");
+  if (g) pickNode(Number(g.dataset.pick));
+  else if (mapSel !== null) pickNode(mapSel);  // a click on empty map closes the popover
 });
 
 /* Simulator controls */
@@ -1422,7 +1492,7 @@ $("btn-close").onclick = () => transport && transport.close();
   renderAll();
   try {
     const saved = $(localStorage.getItem("lunar-mesh-tab"));
-    if (saved && tabs.includes(saved)) saved.hidden ? (restoreSim = true) : selectTab(saved);
+    if (saved && tabs.includes(saved)) saved.hidden ? (restoreSim = true) : tabShown(saved) && selectTab(saved);
   } catch {}
   if (simAvailable && new URLSearchParams(location.search).has("sim")) connectSim();
 })();
