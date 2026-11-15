@@ -961,7 +961,7 @@ static void scen_s9(sim_run *r)
     uint32_t next = 0, refused = 0;
     while (r->net.now_ms - t0 < S9_RUN_MS) {
         while (next < S9_MESSAGES && (int32_t)(r->net.now_ms - due[next]) >= 0) {
-            char text[16];
+            char text[24]; /* room for any unsigned long, so gcc can prove no truncation */
             snprintf(text, sizeof text, "S9 %03lu", (unsigned long)next);
             lmesh_msg_ref ref;
             lmesh_err e = lmesh_send(&r->net.nodes[NODE_A].mesh, ID_D, LMESH_MSG_TEXT, LMESH_PRIO_NORMAL,
