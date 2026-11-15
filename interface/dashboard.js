@@ -1,13 +1,13 @@
 /* Move live panels into an Overview layout without copying controls or connection state. */
 (() => {
   const overview = document.getElementById('panel-overview');
-  const key = 'lunar-mesh-dashboard-v1';
+  const key = 'lunar-mesh-dashboard-v2';  // v2: the map leads on the left, This node is the side panel
   const cards = new Map();
   let dragging = null;
   let maximized = null;
   let saved;
   try { saved = JSON.parse(localStorage.getItem(key)); } catch {}
-  const defaults = [['self'], ['network']];
+  const defaults = [['network'], ['self']];
   const columns = [0, 1].map(() => {
     const column = document.createElement('div');
     column.className = 'dashboard-column';
@@ -173,7 +173,7 @@
       seen.add(id); dock(id, column, column.lastElementChild);
     }
   });
-  for (const [i, id] of ['self', 'network'].entries()) if (!seen.has(id)) dock(id, columns[i], columns[i].lastElementChild);
+  defaults.forEach((ids, i) => ids.forEach(id => { if (!seen.has(id)) dock(id, columns[i], columns[i].lastElementChild); }));
   for (const id of Array.isArray(saved?.minimized) ? saved.minimized : []) {
     const card = cards.get(id); if (card) { card.el.classList.add('is-minimized'); setMin(card, true); }
   }

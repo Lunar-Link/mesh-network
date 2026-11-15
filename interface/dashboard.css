@@ -1,6 +1,6 @@
 .dashboard-toolbar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; }
 .dashboard-toolbar .layout-hint { margin-right: auto; }
-#panel-overview.dashboard { grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); }
+#panel-overview.dashboard { grid-template-columns: minmax(0, 8fr) minmax(0, 4fr); }  /* map column, side panel */
 .dashboard-column { display: flex; flex-direction: column; gap: 12px; min-width: 0; min-height: 180px; }
 .dashboard-card { min-width: 0; }
 .dashboard-card > h2 { align-items: center; flex-wrap: wrap; }

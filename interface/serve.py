@@ -439,6 +439,11 @@ def make_handler(sim):
         def log_message(self, fmt, *args):
             pass
 
+        def end_headers(self):
+            # Revalidate every load, so an edited page, script or stylesheet is never served stale from the cache.
+            self.send_header("Cache-Control", "no-cache")
+            super().end_headers()
+
         def _json(self, code, obj):
             body = json.dumps(obj).encode()
             self.send_response(code)
