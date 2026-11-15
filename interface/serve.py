@@ -3,6 +3,7 @@ import argparse
 import itertools
 import json
 import math
+import os
 import queue
 import random
 import subprocess
@@ -504,6 +505,95 @@ def make_handler(sim):
     return Handler
 
 
+# Startup flourish (--style): terminal flavor only, nothing here affects the server.
+
+LETTERS = {
+    "L": ["██╗     ", "██║     ", "██║     ", "██║     ", "███████╗", "╚══════╝"],
+    "U": ["██╗   ██╗", "██║   ██║", "██║   ██║", "██║   ██║", "╚██████╔╝", " ╚═════╝ "],
+    "N": ["███╗   ██╗", "████╗  ██║", "██╔██╗ ██║", "██║╚██╗██║", "██║ ╚████║", "╚═╝  ╚═══╝"],
+    "A": [" █████╗ ", "██╔══██╗", "███████║", "██╔══██║", "██║  ██║", "╚═╝  ╚═╝"],
+    "R": ["██████╗ ", "██╔══██╗", "██████╔╝", "██╔══██╗", "██║  ██║", "╚═╝  ╚═╝"],
+    "I": ["██╗", "██║", "██║", "██║", "██║", "╚═╝"],
+    "K": ["██╗  ██╗", "██║ ██╔╝", "█████╔╝ ", "██╔═██╗ ", "██║  ██╗", "╚═╝  ╚═╝"],
+    " ": ["  "] * 6,
+}
+VERSION = "v0.4"
+SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
+
+
+def _banner(text):
+    return ["".join(LETTERS[c][row] for c in text) for row in range(6)]
+
+
+def flourish(port, sim_mode):
+    """About three seconds of boot messages and a logo; animated only on a terminal."""
+    out = sys.stdout
+    try:
+        out.reconfigure(encoding="utf-8")
+    except (AttributeError, ValueError):
+        pass
+    tty = out.isatty()
+    color = tty and "NO_COLOR" not in os.environ
+    if color and sys.platform == "win32":
+        os.system("")  # turns on ANSI escapes in the Windows console
+
+    def c(code, s):
+        return f"\033[{code}m{s}\033[0m" if color else s
+
+    def show(s="", end="\n"):
+        out.write(s + end)
+        out.flush()
+
+    def typed(s, delay=0.012):
+        if not tty:
+            return show(s)
+        for ch in s:
+            out.write(ch)
+            out.flush()
+            time.sleep(delay)
+        show()
+
+    steps = [
+        "Aligning lunar relay dish",
+        "Warming up mesh transceivers",
+        "Calibrating phi accrual detectors",
+        "Negotiating with the Web Serial spirits",
+        "Spinning up simulated regolith" if sim_mode else "Listening for ST-LINK heartbeats",
+        "Dusting moon grit off the UI",
+        f"Opening hatch on localhost:{port}",
+    ]
+    width = max(len(s) for s in steps) + 4
+
+    show()
+    typed(c("2", "  > lunar link boot sequence"))
+    show()
+    for i, step in enumerate(steps):
+        label = f"{step} ".ljust(width, ".")
+        if tty:
+            for f in range(4 + (i % 3) * 2):
+                out.write(f"\r  {c('36', SPINNER[f % len(SPINNER)])} {label}")
+                out.flush()
+                time.sleep(0.03)
+        out.write(f"\r  {c('32', '✓')} {label} {c('1;32', 'OK')}\n")
+        out.flush()
+    show()
+
+    logo = _banner("LUNAR LINK")
+    shades = ["38;5;255", "38;5;253", "38;5;251", "38;5;249", "38;5;247", "38;5;244"]
+    for line, shade in zip(logo, shades):
+        show("  " + c(shade, line))
+        if tty:
+            time.sleep(0.07)
+    span = len(logo[0])
+    sub = f"I N T E R F A C E   {VERSION}"
+    out.write("  " + " " * ((span - len(sub)) // 2))
+    typed(c("1;36", sub), 0.02)
+    show("  " + c("2", ("─" * span)))
+    if tty:
+        time.sleep(0.35)
+    show()
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--port", type=int, default=8000)
@@ -515,6 +605,7 @@ def main():
     p.add_argument("--loss", type=int, default=0, help="loss percent on every link")
     p.add_argument("--speed", type=float, default=1.0, help="simulated seconds per real second")
     p.add_argument("--open", action="store_true", help="open the interface")
+    p.add_argument("--style", "-style", action="store_true", help="print a startup flourish before serving")
     a = p.parse_args()
 
     sim = None
@@ -526,6 +617,8 @@ def main():
     server = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(sim))
     server.daemon_threads = True
     mode = f"simulator: {a.topo} of {a.nodes}, seed {a.seed}, {a.loss} % loss, x{a.speed:g}" if sim else "USB only"
+    if a.style:
+        flourish(a.port, bool(sim))
     print(f"interface at http://localhost:{a.port}/  ({mode}); Ctrl+C to stop")
     if a.open:
         url = f"http://localhost:{a.port}/" + ("?sim" if sim else "")
