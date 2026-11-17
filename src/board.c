@@ -1,5 +1,6 @@
-/* Board setup shared by the Nucleo-F446RE and Nucleo-L476RG: pins, SPI, UARTs, battery sense, and the radio interrupt
-   line. The clock, I2C, ADC and random seed are per chip, in src/mcu/<chip>/mcu.c. */
+/* Board setup shared by every board: pins, SPI, UARTs, battery sense, and the radio interrupt line. The pin map is
+   per board (pins_nucleo64.h, pins_bluepill.h); the clock, I2C, ADC and random seed are per chip, in
+   src/mcu/<chip>/mcu.c. */
 #include "board.h"
 
 SPI_HandleTypeDef board_radio_spi;
@@ -27,16 +28,18 @@ static void output(GPIO_TypeDef *port, uint16_t pin, GPIO_PinState level)
     HAL_GPIO_Init(port, &g);
 }
 
-static void alternate(GPIO_TypeDef *port, uint16_t pin, uint32_t af, uint32_t mode, uint32_t pull)
-{
-    GPIO_InitTypeDef g = {0};
-    g.Pin = pin;
-    g.Mode = mode;
-    g.Pull = pull;
-    g.Speed = GPIO_SPEED_FREQ_HIGH;
-    g.Alternate = af;
-    HAL_GPIO_Init(port, &g);
-}
+/* Hands a pin to a peripheral. A macro so that af, which the F1 has no names for, is dropped there before it is
+   compiled (MCU_SET_AF in mcu.h); a pin the peripheral only reads takes MCU_AF_INPUT as its mode. */
+#define alternate(port, pin, af, mode, pull) \
+    do { \
+        GPIO_InitTypeDef init_ = {0}; \
+        init_.Pin = (pin); \
+        init_.Mode = (mode); \
+        init_.Pull = (pull); \
+        init_.Speed = GPIO_SPEED_FREQ_HIGH; \
+        MCU_SET_AF(init_, af); \
+        HAL_GPIO_Init((port), &init_); \
+    } while (0)
 
 static void gpio_init(void)
 {
@@ -62,10 +65,12 @@ static void gpio_init(void)
     g.Pull = GPIO_PULLDOWN;
     HAL_GPIO_Init(RADIO_BUSY_PORT, &g);
 
+#ifdef BUTTON_PIN
     g.Pin = BUTTON_PIN;
     g.Mode = GPIO_MODE_INPUT;
     g.Pull = GPIO_NOPULL;
     HAL_GPIO_Init(BUTTON_PORT, &g);
+#endif
 }
 
 static void spi_init(SPI_HandleTypeDef *h, SPI_TypeDef *instance, uint32_t prescaler)
@@ -135,12 +140,12 @@ void HAL_SPI_MspInit(SPI_HandleTypeDef *h)
     if (h->Instance == RADIO_SPI) {
         __HAL_RCC_SPI1_CLK_ENABLE();
         alternate(RADIO_SCK_PORT, RADIO_SCK_PIN, GPIO_AF5_SPI1, GPIO_MODE_AF_PP, GPIO_NOPULL);
-        alternate(RADIO_MISO_PORT, RADIO_MISO_PIN, GPIO_AF5_SPI1, GPIO_MODE_AF_PP, GPIO_NOPULL);
+        alternate(RADIO_MISO_PORT, RADIO_MISO_PIN, GPIO_AF5_SPI1, MCU_AF_INPUT, GPIO_NOPULL);
         alternate(RADIO_MOSI_PORT, RADIO_MOSI_PIN, GPIO_AF5_SPI1, GPIO_MODE_AF_PP, GPIO_NOPULL);
     } else if (h->Instance == AUX_SPI) {
         __HAL_RCC_SPI2_CLK_ENABLE();
         alternate(AUX_SCK_PORT, AUX_SCK_PIN, GPIO_AF5_SPI2, GPIO_MODE_AF_PP, GPIO_NOPULL);
-        alternate(AUX_MISO_PORT, AUX_MISO_PIN, GPIO_AF5_SPI2, GPIO_MODE_AF_PP, GPIO_NOPULL);
+        alternate(AUX_MISO_PORT, AUX_MISO_PIN, GPIO_AF5_SPI2, MCU_AF_INPUT, GPIO_NOPULL);
         alternate(AUX_MOSI_PORT, AUX_MOSI_PIN, GPIO_AF5_SPI2, GPIO_MODE_AF_PP, GPIO_NOPULL);
     }
 }
@@ -157,15 +162,15 @@ void HAL_I2C_MspInit(I2C_HandleTypeDef *h)
 void HAL_UART_MspInit(UART_HandleTypeDef *h)
 {
     if (h->Instance == HOST_UART) {
-        __HAL_RCC_USART2_CLK_ENABLE();
-        alternate(HOST_TX_PORT, HOST_TX_PIN, GPIO_AF7_USART2, GPIO_MODE_AF_PP, GPIO_NOPULL);
-        alternate(HOST_RX_PORT, HOST_RX_PIN, GPIO_AF7_USART2, GPIO_MODE_AF_PP, GPIO_NOPULL);
+        HOST_UART_CLK_ENABLE();
+        alternate(HOST_TX_PORT, HOST_TX_PIN, HOST_UART_AF, GPIO_MODE_AF_PP, GPIO_NOPULL);
+        alternate(HOST_RX_PORT, HOST_RX_PIN, HOST_UART_AF, MCU_AF_INPUT, GPIO_PULLUP);
         HAL_NVIC_SetPriority(HOST_UART_IRQN, 6, 0);
         HAL_NVIC_EnableIRQ(HOST_UART_IRQN);
     } else if (h->Instance == RADIO_UART) {
-        __HAL_RCC_UART4_CLK_ENABLE();
-        alternate(RADIO_UART_TX_PORT, RADIO_UART_TX_PIN, GPIO_AF8_UART4, GPIO_MODE_AF_PP, GPIO_NOPULL);
-        alternate(RADIO_UART_RX_PORT, RADIO_UART_RX_PIN, GPIO_AF8_UART4, GPIO_MODE_AF_PP, GPIO_PULLUP);
+        RADIO_UART_CLK_ENABLE();
+        alternate(RADIO_UART_TX_PORT, RADIO_UART_TX_PIN, RADIO_UART_AF, GPIO_MODE_AF_PP, GPIO_NOPULL);
+        alternate(RADIO_UART_RX_PORT, RADIO_UART_RX_PIN, RADIO_UART_AF, MCU_AF_INPUT, GPIO_PULLUP);
         HAL_NVIC_SetPriority(RADIO_UART_IRQN, 5, 0);
         HAL_NVIC_EnableIRQ(RADIO_UART_IRQN);
     }

@@ -4,7 +4,13 @@
 
 #include "stm32l4xx_hal.h"
 
+#include "pins_nucleo64.h"
+
 #define MCU_NAME "STM32L476RG"
+
+/* Pins take an alternate-function number, and a peripheral's inputs use the same pin mode as its outputs */
+#define MCU_AF_INPUT GPIO_MODE_AF_PP
+#define MCU_SET_AF(init, af) ((init).Alternate = (af))
 
 /* 80 MHz core with APB1 and APB2 undivided; both SPIs at 5 MHz */
 #define RADIO_SPI_PRESCALER SPI_BAUDRATEPRESCALER_16

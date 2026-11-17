@@ -4,7 +4,13 @@
 
 #include "stm32f4xx_hal.h"
 
+#include "pins_nucleo64.h"
+
 #define MCU_NAME "STM32F446RE"
+
+/* Pins take an alternate-function number, and a peripheral's inputs use the same pin mode as its outputs */
+#define MCU_AF_INPUT GPIO_MODE_AF_PP
+#define MCU_SET_AF(init, af) ((init).Alternate = (af))
 
 /* 84 MHz core: APB2 (SPI1) at 84 MHz, APB1 (SPI2) at 42 MHz; both SPIs at 5.25 MHz */
 #define RADIO_SPI_PRESCALER SPI_BAUDRATEPRESCALER_16

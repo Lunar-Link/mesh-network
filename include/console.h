@@ -1,4 +1,5 @@
-/* The line protocol (SPEC.md Section 11) on the ST-LINK virtual COM port. */
+/* The line protocol (SPEC.md Section 11) on the host UART: the ST-LINK virtual COM port on a Nucleo, a USB serial
+   adapter on a Blue Pill. */
 #ifndef CONSOLE_H
 #define CONSOLE_H
 
