@@ -14,10 +14,10 @@ Node software for the Resilient Lunar Surface Communications Network capstone: a
 
 ```
 mesh-network/
-  platformio.ini      board build: Nucleo-F446RE or Nucleo-L476RG, STM32Cube HAL, one environment per radio and chip
+  platformio.ini      board build: Nucleo-F446RE, Nucleo-L476RG or Blue Pill, STM32Cube HAL, one environment per radio and chip
   src/                board application and platform port (table below)
     radio/<driver>/     one folder per radio driver; the build environment picks one
-    mcu/<chip>/         f446 or l476: clock, I2C, ADC, random seed and flash per chip; the environment picks one
+    mcu/<chip>/         f446, l476 or f103: clock, I2C, ADC, random seed and flash per chip; the environment picks one
   include/            firmware headers: pin map, port, radio interface, node identity
   lib/lmesh/          the protocol library, found by PlatformIO automatically
     library.json        manifest and the library's compiler flags
@@ -65,18 +65,19 @@ The folder is a PlatformIO project: `src/` is the firmware and `lib/lmesh/` is t
 | File | Contents |
 |---|---|
 | `src/main.c` | Start-up and the main loop: console, radio, `lmesh_tick()` when due or after input, sleep between interrupts. |
-| `src/board.c`, `include/board.h` | Pin map (the same on both boards), radio SPI and UART, USB serial, battery sense, radio reset line. |
-| `src/mcu/f446/`, `src/mcu/l476/` | What differs per chip: clock (84 MHz HSI or 80 MHz MSI), I2C, ADC, the random seed (ADC noise, or the L476's RNG), the storage flash backend, and `mcu.h` with SPI prescalers, the battery ADC channel and the storage geometry. |
+| `src/board.c`, `include/board.h` | Radio SPI and UART, host serial, battery sense, radio reset line, written against the pin map's names. |
+| `include/pins_nucleo64.h`, `include/pins_bluepill.h` | Pin map per board: which pins, UARTs and interrupt lines carry each function. The two Nucleos share one. |
+| `src/mcu/f446/`, `src/mcu/l476/`, `src/mcu/f103/` | What differs per chip: clock (84 MHz HSI, 80 MHz MSI or 64 MHz HSI), I2C, ADC, the random seed (ADC noise, or the L476's RNG), the storage flash backend, and `mcu.h` with the board's pin map, SPI prescalers, the battery ADC channel and the storage geometry. |
 | `src/port.c` | The `lmesh_port` functions: SysTick clock, random numbers from a per-start seed, the radio driver, battery voltage; the node identity. |
-| `src/console.c` | Line protocol on the ST-LINK virtual COM port: command lines in, replies and events out, never blocking. |
-| `src/storage.c` | The library's storage slots in a wear-leveled log at the top of flash (F446: sectors 5 to 7, 384 KB; L476: 64 pages of bank 2, 128 KB), safe against power loss mid-write. |
+| `src/console.c` | Line protocol on the host UART (the ST-LINK virtual COM port on a Nucleo, a USB serial adapter on a Blue Pill): command lines in, replies and events out, never blocking. A command waits for room in the transmit ring, so a burst is answered in turn. |
+| `src/storage.c` | The library's storage slots in a wear-leveled log at the top of flash (F446: sectors 5 to 7, 384 KB; L476: 64 pages of bank 2, 128 KB; F103: the top 8 KB), safe against power loss mid-write. |
 | `src/serial.c` | Interrupt-driven UART receive and transmit rings shared by the console and UART radios. |
-| `src/interrupts.c` | Interrupt handlers shared by both chips. |
+| `src/interrupts.c` | Interrupt handlers shared by every chip, named through the pin map. |
 | `include/radio.h` | The interface every radio driver implements: init, send, airtime estimate, poll, and optional channel sensing. |
-| `tools/flash.py` | Reads which chip the attached ST-LINK sees, builds the matching environment and flashes it, with the node id and callsign. |
+| `tools/flash.py` | Reads which chip the attached ST-LINK sees (either Nucleo, or a Blue Pill), builds the matching environment and flashes it, with the node id and callsign. |
 | `include/node_config.h` | Node id, network id, network key and callsign, set per board with `-D` flags. |
-| `src/radio/rylr999/` | REYAX RYLR999 (868/915 MHz LoRa, AT commands over UART4): configures the module, sends frames as base64url text, parses `+RCV`, estimates airtime with Semtech's formula. |
-| `src/radio/rylr498/` | REYAX RYLR498 (433 MHz LoRa, AT commands over UART4): the RYLR999 driver's scheme at the RF study's band and settings, with a fallback for firmware that cannot store the band. |
+| `src/radio/rylr999/` | REYAX RYLR999 (868/915 MHz LoRa, AT commands over the radio UART): configures the module, sends frames as base64url text, parses `+RCV`, estimates airtime with Semtech's formula. |
+| `src/radio/rylr498/` | REYAX RYLR498 (433 MHz LoRa, AT commands over the radio UART): the RYLR999 driver's scheme at the RF study's band and settings, with a fallback for firmware that cannot store the band. |
 | `src/radio/lr1121/` | Waveshare Core1121-LF (Semtech LR1121 over SPI1): own SPI command layer with BUSY handling, bring-up with TCXO, RF switch and calibration, LoRa with raw binary frames, CAD channel sensing, power down. |
 | `src/radio/none/` | No radio: frames go nowhere and complete after the simulator's airtime model. For testing the console on one board. |
 
@@ -132,7 +133,7 @@ The browser interface for a node is in `interface/`; `python interface/serve.py 
 
 CTest runs the unit tests, seed 1 of every scenario, 20-seed sweeps of S3, S6, S9, S11 and S15, and the terrain run on plan 0 (seed 1, and 10 seeds with model error). The build defaults to Release; a sweep of 200 seeds takes seconds.
 
-The board firmware builds with PlatformIO (the VS Code extension, or `pio` from its core) for either a Nucleo-F446RE or a Nucleo-L476RG. Both are Nucleo-64 boards and take the same wiring. Environments are named `<radio>_<chip>`, with chip `f446` or `l476`. The radios are `rylr999` (`rylr999_f446` is the default), `lr1121` (the 433 MHz design radio), `rylr498` (a 433 MHz AT-command module) and `none` (no radio).
+The board firmware builds with PlatformIO (the VS Code extension, or `pio` from its core) for a Nucleo-F446RE, a Nucleo-L476RG or a Blue Pill (STM32F103C8). The two Nucleo-64 boards take the same wiring; the Blue Pill has its own pin map and smaller tables (see below). Environments are named `<radio>_<chip>`, with chip `f446`, `l476` or `f103`. The radios are `rylr999` (`rylr999_f446` is the default), `lr1121` (the 433 MHz design radio), `rylr498` (a 433 MHz AT-command module) and `none` (no radio).
 
 The easiest way to flash is `tools/flash.py`. It asks the attached ST-LINK which chip it sees, builds the matching environment and programs it. Give each board its own node id, and the callsign before transmitting:
 
@@ -141,6 +142,7 @@ python tools/flash.py --list                       # attached ST-LINKs and the c
 python tools/flash.py --node-id 1                  # rylr999 on the only attached board
 python tools/flash.py lr1121 --node-id 2 --station-id N0CALL
 python tools/flash.py --node-id 3 --serial 0670FF565357657287163507   # one of several attached boards
+python tools/flash.py rylr498 --node-id 4 --chip f103                 # name the chip when its id cannot be read
 pio device monitor -p COM8
 ```
 
@@ -154,11 +156,28 @@ pio run -e rylr999_l476 -t upload
 
 Message ids, the route sequence number and the duplicate windows survive resets and re-flashing; a full chip erase clears them. On connect the node prints a `boot` event and, with the RYLR999, a `radio` event with `"state":"ready"` once the module is configured; then the commands of SPEC.md Section 11 work from any serial terminal.
 
+**Blue Pill.** The `f103` environments run the same firmware on a Blue Pill (STM32F103C8T6: 20 KB of RAM, 64 KB of flash). They build, but no Blue Pill has run them yet.
+
+| Function | Blue Pill pin | Notes |
+|---|---|---|
+| Radio SPI (SPI1) | PA5 SCK, PA6 MISO, PA7 MOSI, PA4 NSS | 4 MHz |
+| Radio reset, interrupt, BUSY | PB0 reset, PB1 interrupt (`RADIO_DIO0`), PA8 BUSY | The Core1121-LF's DIO9 goes to PB1. |
+| UART radio (USART3) | PB10 TX to the module's RXD, PB11 RX from its TXD | 115200 baud; RYLR999 and RYLR498. Reset on PB0. |
+| Line protocol (USART1) | PA9 TX, PA10 RX | To a USB serial adapter (adapter RX to PA9, TX to PA10, grounds joined), 115200 baud. |
+| Battery sense (ADC1) | PA0 | Through the 2:1 divider. |
+| Second SPI (SPI2) | PB13 SCK, PB14 MISO, PB15 MOSI, PB12 NSS | Reserved. |
+| Sensor bus (I2C1) | PB6 SCL, PB7 SDA | Needs pull-up resistors on the bus; the F1 has none for these pins. |
+
+- **Programming.** The board has no debug probe. Wire an ST-LINK to its SWD header (SWDIO, SWCLK, GND) and power the board, from the dongle's 3.3 V pin or its own USB. A Nucleo's ST-LINK works too, from its CN4 header with both CN2 jumpers removed; CN4 does not supply power. `tools/flash.py` recognizes the chip, uses an ST-LINK dongle that has no serial port when it is the only ST-LINK attached, and accepts clone chips that answer with another debug id. `--chip f103` skips the id read. PlatformIO's own upload is `pio run -e rylr498_f103 -t upload`.
+- **Smaller tables.** To fit the RAM, `platformio.ini` builds these environments with 12 store records (default 64), 8 neighbors (16), 16 recent-forward entries (64) and a 2 KB console ring (8 KB). The sizes are local, so a Blue Pill works in a network of nodes built with the defaults. It holds at most 12 messages at a time (its own unconfirmed ones and those it relays): a `send` beyond that is refused until one completes, and relayed messages are evicted in the specified order. It tracks at most 8 neighbors. A table dump holds about 1 KB and then ends with `"truncated":true`: 5 `links` rows, 5 or 6 `nodes` rows, 7 `msgs` rows and 15 `routes` rows, so the interface shows that many.
+- **Storage.** The log is the top 8 KB of flash, so it wears faster than on the Nucleos. The duplicate windows are saved at most once a minute (10 s elsewhere), which gives about 80 days of continuous incoming messages at the flash's rated 10,000 erase cycles; after a power cut, a message delivered in the last minute may be delivered once more.
+- **Power.** Run the RYLR999 from its own 5 V supply as on the Nucleo. The Blue Pill's 3.3 V regulator is small and differs from board to board, and a RYLR498 or Core1121-LF draws about 140 mA at +22 dBm, so give the module its own 3.3 V supply, grounds joined, unless the board's regulator is known to carry it.
+
 **RYLR999 wiring.** Module RXD_LoRa to A0 (PA0), TXD_LoRa to A1 (PA1), RST to D9 (PC7), GND to GND. The module needs 5 V at up to 950 mA at +30 dBm, more than the Nucleo's USB supply gives, so power it from a separate 5 V supply with grounds joined. The driver defaults to +10 dBm for the bench. The driver queries the module's settings at start and writes only those that differ, because the module keeps them in flash. RF settings are `-D` flags in `rylr999.c` and must match on every node. It never sets the module's `AT+CPIN` password, which would encrypt the link (not allowed under Part 97).
 
 **RYLR498 wiring and settings.** Module RXD to A0 (PA0), TXD to A1 (PA1), NRST to D9 (PC7), VDD to 3V3, GND to GND; check the pin numbers against the module's datasheet. The module runs on 3.3 V and draws 140 mA at +22 dBm, which the Nucleo's 3V3 pin can supply. It talks at 115200 baud, the module's default. The AT commands, base64url framing, query-before-write bring-up and airtime estimate are the RYLR999 driver's. The defaults are the RF study's: 433 MHz, SF9, 125 kHz, CR 4/5, preamble 12, +22 dBm. Every RF setting is a `-D` flag at the top of `rylr498.c`, checked against REYAX's limits (390 to 525 MHz, 0 to 22 dBm, SF9 at most at 125 kHz), and must match on every node. A 120-byte frame takes about 913 ms at SF9 because of the base64 expansion. Lower the power with `-DRYLR498_POWER_DBM=10` for boards a few meters apart. Firmware before 1.2.0 rejects the `,M` that stores the band in flash; the driver then sets the band without it after each reset, and the `ready` event shows `"band_stored":false`. 420 to 450 MHz is the 70 cm amateur band in the US, so set `STATION_ID` to the callsign.
 
-**Core1121-LF wiring.** The module is 3.3 V only, on supply and logic, and the driver needs every signal below. Pin numbers are the schematic's; check them against the signal names printed on the module.
+**Core1121-LF wiring.** The module is 3.3 V only, on supply and logic, and the driver needs every signal below. Pin numbers are the schematic's; check them against the signal names printed on the module. The table is for the Nucleo boards; on a Blue Pill take the pins from its table above by `board.h` name.
 
 | Module pin | Signal | Nucleo pin | Arduino header | `board.h` name |
 |---|---|---|---|---|
