@@ -36,8 +36,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        env: [rylr999_f446, rylr999_l476, rylr498_f446, rylr498_l476,
-              lr1121_f446, lr1121_l476, none_f446, none_l476]
+        env: [rylr999_f446, rylr999_l476, rylr999_f103,
+              rylr498_f446, rylr498_l476, rylr498_f103,
+              lr1121_f446, lr1121_l476, lr1121_f103,
+              none_f446, none_l476, none_f103]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/cache@v4
@@ -51,3 +53,16 @@ jobs:
         run: pip install platformio
       - name: Build
         run: pio run -e ${{ matrix.env }}
+
+  # Single gate for branch protection: require only this check on main, so the
+  # rule does not need updating when the matrices above change.
+  ci-passed:
+    name: CI passed
+    if: always()
+    needs: [host-tests, firmware]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check all jobs succeeded
+        run: |
+          echo '${{ toJSON(needs) }}'
+          [ "${{ needs.host-tests.result }}" = success ] && [ "${{ needs.firmware.result }}" = success ]

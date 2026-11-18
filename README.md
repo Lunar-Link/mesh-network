@@ -1,5 +1,7 @@
 # mesh-network
 
+[![CI](https://github.com/Lunar-Link/mesh-network/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/Lunar-Link/mesh-network/actions/workflows/ci.yml)
+
 Node software for the Resilient Lunar Surface Communications Network capstone: a portable C library that makes a set of identical radio nodes discover each other, route around failures, and carry messages through outages until they can be delivered and confirmed. It is written to the brief's requirements and is independent of the radio and the microcontroller.
 
 **Status (27 October 2026):** every layer is implemented and unit-tested on the host, and all fourteen simulator scenarios of PLAN.md Section 5 pass, with the routing and messaging sweeps at 200 of 200 seeds. The board firmware now has the platform port with flash storage, the line protocol on the USB serial port, and a driver for the REYAX RYLR999 radio; it builds but has not yet run on a board. A driver for the Waveshare Core1121-LF (Semtech LR1121) at 433 MHz was added on 31 October and tested against a fake chip; no module has run it yet. This is a starting point to be improved.
